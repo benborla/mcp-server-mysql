@@ -13,7 +13,7 @@ const mysql_queryEval: EvalFunction = {
     }
 };
 
-const mysql_queryEval: EvalFunction = {
+const mysql_queryEval2: EvalFunction = {
     name: 'mysql_query Tool Evaluation',
     description: 'Evaluates the MySQL query tool for correct SQL generation and execution',
     run: async () => {
@@ -22,7 +22,7 @@ const mysql_queryEval: EvalFunction = {
     }
 };
 
-const mysql_queryEval: EvalFunction = {
+const mysql_queryEval3: EvalFunction = {
     name: 'mysql_queryEval',
     description: 'Evaluates the mysql_query tool',
     run: async () => {
@@ -33,9 +33,9 @@ const mysql_queryEval: EvalFunction = {
 
 const config: EvalConfig = {
     model: openai("gpt-4"),
-    evals: [mysql_queryEval, mysql_queryEval, mysql_queryEval]
+    evals: [mysql_queryEval, mysql_queryEval2, mysql_queryEval3]
 };
   
 export default config;
   
-export const evals = [mysql_queryEval, mysql_queryEval, mysql_queryEval];
+export const evals = [mysql_queryEval, mysql_queryEval2, mysql_queryEval3];

@@ -32,8 +32,16 @@ function log(type: LogType = 'info', ...args: any[]): void {
 async function setupTestDatabase() {
   // Create connection config, omitting password if empty
   const config: any = {
-    host: process.env.MYSQL_HOST || '127.0.0.1',
-    port: Number(process.env.MYSQL_PORT) || 3306,
+    // Use Unix socket if provided, otherwise use host/port
+    ...(process.env.MYSQL_SOCKET_PATH
+      ? {
+          socketPath: process.env.MYSQL_SOCKET_PATH,
+        }
+      : {
+          host: process.env.MYSQL_HOST || '127.0.0.1',
+          port: Number(process.env.MYSQL_PORT) || 3306,
+        }
+    ),
     user: process.env.MYSQL_USER || 'root',
     password: process.env.MYSQL_PASS || 'root', // Default to 'root' if not specified
     multipleStatements: true

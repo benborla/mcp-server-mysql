@@ -4,18 +4,18 @@ startCommand:
   configSchema:
     # JSON Schema defining the configuration options for the MCP.
     type: object
-    required:
-      - mysqlHost
-      - mysqlPort
-      - mysqlUser
+    required: []
     properties:
+      mysqlSocketPath:
+        type: string
+        description: Unix socket path for local MySQL connections. If provided, host and port are ignored.
       mysqlHost:
         type: string
-        description: The host address of the MySQL database.
+        description: The host address of the MySQL database. Ignored if socket path is provided.
         default: "127.0.0.1"
       mysqlPort:
         type: string
-        description: The port number for connecting to MySQL.
+        description: The port number for connecting to MySQL. Ignored if socket path is provided.
         default: "3306"
       mysqlUser:
         type: string
@@ -50,4 +50,4 @@ startCommand:
         description: If set to true, DELETE operations will be allowed.
     commandFunction:
       |-
-      (config) => ({ "command": "node", "args": ["dist/index.js"], "env": { "MYSQL_HOST": config.mysqlHost, "MYSQL_PORT": config.mysqlPort, "MYSQL_USER": config.mysqlUser, "MYSQL_PASS": config.mysqlPass, "MYSQL_DB": config.mysqlDb, "MYSQL_SSL": config.ssl, "MYSQL_SSL_REJECT_UNAUTHORIZED": config.rejectUnauthorizedSSL, "ALLOW_INSERT_OPERATION": config.allowInsertOperation, "ALLOW_UPDATE_OPERATION": config.allowUpdateOperation, "ALLOW_DELETE_OPERATION": config.allowDeleteOperation } })
+      (config) => ({ "command": "node", "args": ["dist/index.js"], "env": { "MYSQL_SOCKET_PATH": config.mysqlSocketPath, "MYSQL_HOST": config.mysqlHost, "MYSQL_PORT": config.mysqlPort, "MYSQL_USER": config.mysqlUser, "MYSQL_PASS": config.mysqlPass, "MYSQL_DB": config.mysqlDb, "MYSQL_SSL": config.ssl, "MYSQL_SSL_REJECT_UNAUTHORIZED": config.rejectUnauthorizedSSL, "ALLOW_INSERT_OPERATION": config.allowInsertOperation, "ALLOW_UPDATE_OPERATION": config.allowUpdateOperation, "ALLOW_DELETE_OPERATION": config.allowDeleteOperation } })

@@ -197,7 +197,7 @@ if (ALLOW_INSERT_OPERATION || ALLOW_UPDATE_OPERATION || ALLOW_DELETE_OPERATION |
   toolDescription += ' (READ-ONLY)'
 }
 
-// Update MySQL config to handle blank database name
+// Update MySQL config to handle blank database name and Unix socket connections
 const config = {
   server: {
     name: '@benborla29/mcp-server-mysql',
@@ -205,8 +205,16 @@ const config = {
     connectionTypes: ['stdio'],
   },
   mysql: {
-    host: process.env.MYSQL_HOST || '127.0.0.1',
-    port: Number(process.env.MYSQL_PORT || '3306'),
+    // Use Unix socket if provided, otherwise use host/port
+    ...(process.env.MYSQL_SOCKET_PATH
+      ? {
+          socketPath: process.env.MYSQL_SOCKET_PATH,
+        }
+      : {
+          host: process.env.MYSQL_HOST || '127.0.0.1',
+          port: Number(process.env.MYSQL_PORT || '3306'),
+        }
+    ),
     user: process.env.MYSQL_USER || 'root',
     password: process.env.MYSQL_PASS || 'root',
     database: process.env.MYSQL_DB || undefined, // Allow undefined database for multi-DB mode
@@ -232,8 +240,17 @@ const config = {
 // @INFO: Add debug logging for configuration
 log('info', 'MySQL Configuration:', JSON.stringify(
   {
-    host: config.mysql.host,
-    port: config.mysql.port,
+    ...(process.env.MYSQL_SOCKET_PATH
+      ? {
+          socketPath: process.env.MYSQL_SOCKET_PATH,
+          connectionType: 'Unix Socket',
+        }
+      : {
+          host: process.env.MYSQL_HOST || '127.0.0.1',
+          port: process.env.MYSQL_PORT || '3306',
+          connectionType: 'TCP/IP',
+        }
+    ),
     user: config.mysql.user,
     password: config.mysql.password ? '******' : 'not set',
     database: config.mysql.database || 'MULTI_DB_MODE',
@@ -294,6 +311,11 @@ const getServer = (): Promise<Server> => {
         async () => {
           try {
             log('error', 'Handling ListResourcesRequest')
+
+            // Determine connection info for URI
+            const connectionInfo = process.env.MYSQL_SOCKET_PATH 
+            ? `socket:${process.env.MYSQL_SOCKET_PATH}`
+            : `${process.env.MYSQL_HOST || '127.0.0.1'}:${process.env.MYSQL_PORT || '3306'}`;
             
             // If we're in multi-DB mode, list all databases first
             if (isMultiDbMode) {
@@ -317,7 +339,7 @@ const getServer = (): Promise<Server> => {
                 allResources.push(...tables.map((row: TableRow) => ({
                   uri: new URL(
                     `${db.Database}/${row.table_name}/${config.paths.schema}`,
-                    `${config.mysql.host}:${config.mysql.port}`,
+                    connectionInfo,
                   ).href,
                   mimeType: 'application/json',
                   name: `"${db.Database}.${row.table_name}" database schema`,
@@ -337,7 +359,7 @@ const getServer = (): Promise<Server> => {
                 resources: results.map((row: TableRow) => ({
                   uri: new URL(
                     `${row.table_name}/${config.paths.schema}`,
-                    `${config.mysql.host}:${config.mysql.port}`,
+                    connectionInfo,
                   ).href,
                   mimeType: 'application/json',
                   name: `"${row.table_name}" database schema`,

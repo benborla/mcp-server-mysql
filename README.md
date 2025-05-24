@@ -347,8 +347,9 @@ For more control over the MCP server's behavior, you can use these advanced conf
 ## Environment Variables
 
 ### Basic Connection
-- `MYSQL_HOST`: MySQL server host (default: "127.0.0.1")
-- `MYSQL_PORT`: MySQL server port (default: "3306")
+- `MYSQL_SOCKET_PATH`: Unix socket path for local connections (e.g., "/tmp/mysql.sock")
+- `MYSQL_HOST`: MySQL server host (default: "127.0.0.1") - ignored if MYSQL_SOCKET_PATH is set
+- `MYSQL_PORT`: MySQL server port (default: "3306") - ignored if MYSQL_SOCKET_PATH is set
 - `MYSQL_USER`: MySQL username (default: "root")
 - `MYSQL_PASS`: MySQL password
 - `MYSQL_DB`: Target database name (leave empty for multi-DB mode)

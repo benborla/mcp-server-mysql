@@ -1,0 +1,24 @@
+{
+  "mcpServers": {
+    "mcp_server_mysql": {
+      "command": "c:\\Program Files\\nodejs\\node",
+      "args": [
+        "c:\\mcp-server-mysql\\dist\\index.js"
+      ],
+      "env": {
+        "MYSQL_HOST": "10.0.4.9",
+        "MYSQL_PORT": "3306",
+        "MYSQL_USER": "root",
+        "MYSQL_PASS": "8wy4vn680ye4eaSNR*%*Sm8",
+        "MYSQL_DB": "finder",
+        "ALLOW_INSERT_OPERATION": "false",
+        "ALLOW_UPDATE_OPERATION": "false",
+        "ALLOW_DELETE_OPERATION": "false",
+        "PATH": "/c/Program Files/nodejs/node/../",
+        "NODE_PATH": "/c/Program Files/nodejs/node/../../lib/node_modules"
+        // "PATH": "/Users/atlasborla/Library/Application Support/Herd/config/nvm/versions/node/v22.9.0/bin:/usr/bin:/bin", // <--- Important to add the following, run in your terminal `echo "$(which node)/../"` to get the path
+        // "NODE_PATH": "/Users/atlasborla/Library/Application Support/Herd/config/nvm/versions/node/v22.9.0/lib/node_modules" // <--- Important to add the following, run in your terminal `echo "$(which node)/../../lib/node_modules"`
+      }
+    }
+  }
+}

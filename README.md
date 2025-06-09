@@ -523,6 +523,18 @@ This MCP server is licensed under the MIT License. See the LICENSE file for deta
 
 
 ## Guide
+
+Env:
+# MCP Configuration
+MCP_TRANSPORT=stdio|http
+# MYSQL_SOCKET_PATH=/tmp/mysql.sock
+MYSQL_HOST=
+MYSQL_PORT=3306
+MYSQL_USER=root
+MYSQL_PASS=
+MYSQL_DB=
+
+Run:
 $ npm i
 $ npm run dev
 $ npm run build

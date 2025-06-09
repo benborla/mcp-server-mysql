@@ -1,0 +1,34 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "C:\\Users\\<MY_USER_NAME>\\Desktop",
+        "C:\\Users\\<MY_USER_NAME>\\Downloads"
+      ]
+    },
+    "mcp_server_mysql_remote": {
+      "command": "npx",
+      "args": ["mcp-remote", "<REMOTE_URL>/mcp"]
+    },
+    "mcp_server_mysql": {
+      "command": "c:\\Program Files\\nodejs\\node",
+      "args": [
+        "C:\\Users\\<MY_USER_NAME>\\OneDrive - Startup Nation Central\\Documents\\mcp-server-mysql\\dist\\index.js"
+      ],
+      "env": {
+        "MYSQL_HOST": "localhost",
+        "MYSQL_PORT": "3306",
+        "MYSQL_USER": "root",
+        "MYSQL_PASS": "password",
+        "MYSQL_DB": "",
+        "ALLOW_INSERT_OPERATION": "false",
+        "ALLOW_UPDATE_OPERATION": "false",
+        "ALLOW_DELETE_OPERATION": "false",
+        "MCP_TRANSPORT": "stdio"
+      }
+    }
+  }
+}

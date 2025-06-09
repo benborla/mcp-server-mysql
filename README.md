@@ -520,3 +520,27 @@ If you'd like to contribute to any of these areas, please check the issues on Gi
 ## License
 
 This MCP server is licensed under the MIT License. See the LICENSE file for details.
+
+
+## Guide
+
+Env:
+# MCP Configuration
+MCP_TRANSPORT=stdio|http
+# MYSQL_SOCKET_PATH=/tmp/mysql.sock
+MYSQL_HOST=
+MYSQL_PORT=3306
+MYSQL_USER=root
+MYSQL_PASS=
+MYSQL_DB=
+
+Run:
+$ npm i
+$ npm run dev
+$ npm run build
+$ npm run start
+### debug
+$ npx @modelcontextprotocol/inspector
+
+### Cloud build
+$ node --env-file=".env" docker_deploy_gcp_cloud_build.js

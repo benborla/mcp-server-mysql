@@ -1,9 +1,22 @@
 {
   "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-filesystem",
+        "C:\\Users\\<MY_USER_NAME>\\Desktop",
+        "C:\\Users\\<MY_USER_NAME>\\Downloads"
+      ]
+    },
+    "mcp_server_mysql_remote": {
+      "command": "npx",
+      "args": ["mcp-remote", "<REMOTE_URL>/mcp"]
+    },
     "mcp_server_mysql": {
       "command": "c:\\Program Files\\nodejs\\node",
       "args": [
-        "c:\\mcp-server-mysql\\dist\\index.js"
+        "C:\\Users\\<MY_USER_NAME>\\OneDrive - Startup Nation Central\\Documents\\mcp-server-mysql\\dist\\index.js"
       ],
       "env": {
         "MYSQL_HOST": "localhost",

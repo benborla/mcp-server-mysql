@@ -520,3 +520,15 @@ If you'd like to contribute to any of these areas, please check the issues on Gi
 ## License
 
 This MCP server is licensed under the MIT License. See the LICENSE file for details.
+
+
+## Guide
+$ npm i
+$ npm run dev
+$ npm run build
+$ npm run start
+### debug
+$ npx @modelcontextprotocol/inspector
+
+### Cloud build
+$ node --env-file=".env" docker_deploy_gcp_cloud_build.js

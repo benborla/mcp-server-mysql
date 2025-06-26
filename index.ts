@@ -2,6 +2,10 @@
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import express from "express";
+import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
+import { randomUUID } from "node:crypto";
 import {
   CallToolRequestSchema,
   ListResourcesRequestSchema,
@@ -316,9 +320,88 @@ async function runServer(): Promise<void> {
     log("info", "Database connection test successful");
     connection.release();
 
-    const server = await getServer();
-    const transport = new StdioServerTransport();
-    await server.connect(transport);
+    // Choose transport based on env var MCP_TRANSPORT: "stdio" or "http" (default: http)
+    const TRANSPORT = process.env.MCP_TRANSPORT || "http";
+
+    if (TRANSPORT === "stdio") {
+      log("info", "Starting MCP server in stdio mode");
+      const server = await getServer();
+      const transport = new StdioServerTransport();
+      await server.connect(transport);
+    } else {
+      log("info", "Starting MCP server in HTTP mode with session management");
+      const app = express();
+      app.use(express.json());
+
+      // Store transports by session ID
+      const transports: { [sessionId: string]: { transport: StreamableHTTPServerTransport } } = {};
+
+      app.get("/", (req, res) => {
+      
+      });
+      // POST /mcp: handle client-to-server communication
+      app.post(["/mcp","/sse"], async (req, res) => {
+
+        const sessionId = req.headers['mcp-session-id'] as string | undefined;
+
+        let transport: StreamableHTTPServerTransport;
+
+        if (sessionId && transports[sessionId]) {
+          // Reuse existing transport
+          transport = transports[sessionId].transport;
+        } else if (!sessionId && isInitializeRequest(req.body)) {
+          // New initialization request
+          transport = new StreamableHTTPServerTransport({
+            sessionIdGenerator: () => randomUUID(),
+            onsessioninitialized: (newSid: string) => {
+              transports[newSid] = { transport };
+            }
+          });
+          // Clean up transport when closed (reference: README)
+          transport.onclose = () => {
+            if (transport.sessionId) {
+              delete transports[transport.sessionId];
+            }
+          };
+          const server = await getServer();
+          await server.connect(transport);
+        } else {
+          // Invalid request
+          log("error", "Invalid MCP session request", { sessionId, body: req.body });
+          res.status(400).json({
+            jsonrpc: '2.0',
+            error: {
+              code: -32000,
+              message: 'Bad Request: No valid session ID provided',
+            },
+            id: null,
+          });
+          return;
+        }
+
+        // Handle the request
+        await transport.handleRequest(req, res, req.body);
+      });
+
+      // GET and DELETE /mcp: handle server-to-client notifications and session termination
+      const handleSessionRequest = async (req: any, res: any) => {
+        const sessionId = req.headers['mcp-session-id'] as string | undefined;
+        if (!sessionId || !transports[sessionId]) {
+          res.status(400).send('Invalid or missing session ID');
+          return;
+        }
+        const transport = transports[sessionId].transport;
+        await transport.handleRequest(req, res);
+      };
+
+      app.get('/mcp', handleSessionRequest);
+      app.delete('/mcp', handleSessionRequest);
+
+      const PORT = process.env.PORT || 3000;
+      app.listen(PORT, () => {
+        log("info", `MCP Streamable HTTP Server (multi-client) listening on port ${PORT}`);
+      });
+    }
   } catch (error) {
     log("error", "Fatal error during server startup:", error);
     safeExit(1);

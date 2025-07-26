@@ -36,7 +36,10 @@ import {
   poolPromise,
 } from "./src/db/index.js";
 
+import path from 'path';
 import express, { Request, Response } from "express";
+import { fileURLToPath } from 'url';
+
 
 log("info", `Starting MySQL MCP server v${version}...`);
 
@@ -380,26 +383,32 @@ export default function createMcpServer({
   return server;
 }
 
-// If this file is being run directly (not imported), we need to handle it differently
-// This is for backward compatibility with the old way of running the server
-// Check if this module is the main module (directly executed)
+/**
+* Checks if the current module is the main module (the entry point of the application).
+* This function works for both ES Modules (ESM) and CommonJS.
+* @returns {boolean} - True if the module is the main module, false otherwise.
+*/
 const isMainModule = () => {
-  // For ESM
-  if (typeof import.meta !== "undefined" && import.meta.url) {
-    try {
-      return (
-        import.meta.url.startsWith("file:") &&
-        process.argv[1] &&
-        import.meta.url === `file://${process.argv[1]}`
-      );
-    } catch (e) {
-      // Fall back to a simple check if import.meta causes issues
-      return false;
-    }
+  // 1. Standard check for CommonJS
+  // `require.main` refers to the application's entry point module.
+  // If it's the same as the current `module`, this file was executed directly.
+  if (typeof require !== 'undefined' && require.main === module) {
+    return true;
   }
-  // Default fallback
+  // 2. Check for ES Modules (ESM)
+  // `import.meta.url` provides the file URL of the current module.
+  // `process.argv[1]` provides the path of the executed script.
+  if (typeof import.meta !== 'undefined' && import.meta.url && process.argv[1]) {
+    // Convert the `import.meta.url` (e.g., 'file:///path/to/file.js') to a system-standard absolute path.
+    const currentModulePath = fileURLToPath(import.meta.url);
+    // Resolve `process.argv[1]` (which can be a relative path) to a standard absolute path.
+    const mainScriptPath = path.resolve(process.argv[1]);
+    // Compare the two standardized absolute paths.
+    return currentModulePath === mainScriptPath;
+  }
+  // Fallback if neither of the above conditions are met.
   return false;
-};
+}
 
 // Start the server if this file is being run directly
 if (isMainModule()) {

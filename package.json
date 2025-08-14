@@ -1,9 +1,9 @@
 {
-  "name": "@benborla29/mcp-server-mysql",
-  "version": "2.0.5",
-  "description": "MCP server for interacting with MySQL databases based on Node",
+  "name": "@bulgariamitko/mcp-server-mysql-write",
+  "version": "2.0.6",
+  "description": "MCP server for interacting with MySQL databases with write operations support (modified from @benborla29/mcp-server-mysql)",
   "license": "MIT",
-  "author": "Ben Borla (https://github.com/benborla)",
+  "author": "Dimitar Klaturov (https://github.com/bulgariamitko) - Modified from Ben Borla (https://github.com/benborla)",
   "type": "module",
   "main": "dist/index.js",
   "module": "index.ts",

@@ -21,6 +21,10 @@ export const ALLOW_DELETE_OPERATION =
   process.env.ALLOW_DELETE_OPERATION === "true";
 export const ALLOW_DDL_OPERATION = process.env.ALLOW_DDL_OPERATION === "true";
 
+// Transaction mode control
+export const MYSQL_DISABLE_READ_ONLY_TRANSACTIONS = 
+  process.env.MYSQL_DISABLE_READ_ONLY_TRANSACTIONS === "true";
+
 // Schema-specific permissions
 export const SCHEMA_INSERT_PERMISSIONS: SchemaPermissions =
   parseSchemaPermissions(process.env.SCHEMA_INSERT_PERMISSIONS);

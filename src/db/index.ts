@@ -11,7 +11,7 @@ import { extractSchemaFromQuery, getQueryTypes } from "./utils.js";
 
 import * as mysql2 from "mysql2/promise";
 import { log } from "./../utils/index.js";
-import { mcpConfig as config } from "./../config/index.js";
+import { mcpConfig as config, MYSQL_DISABLE_READ_ONLY_TRANSACTIONS } from "./../config/index.js";
 
 // Force read-only mode in multi-DB mode unless explicitly configured otherwise
 if (isMultiDbMode && process.env.MULTI_DB_WRITE_MODE !== "true") {
@@ -275,8 +275,12 @@ async function executeReadOnlyQuery<T>(sql: string): Promise<T> {
     connection = await pool.getConnection();
     log("error", "Read-only connection acquired");
 
-    // Set read-only mode
-    await connection.query("SET SESSION TRANSACTION READ ONLY");
+    // Set read-only mode (unless disabled via environment variable)
+    if (!MYSQL_DISABLE_READ_ONLY_TRANSACTIONS) {
+      await connection.query("SET SESSION TRANSACTION READ ONLY");
+    } else {
+      log("info", "Read-only transactions disabled via MYSQL_DISABLE_READ_ONLY_TRANSACTIONS=true");
+    }
 
     // Begin transaction
     await connection.beginTransaction();
@@ -292,8 +296,10 @@ async function executeReadOnlyQuery<T>(sql: string): Promise<T> {
       // Rollback transaction (since it's read-only)
       await connection.rollback();
 
-      // Reset to read-write mode
-      await connection.query("SET SESSION TRANSACTION READ WRITE");
+      // Reset to read-write mode (only if we set it to read-only)
+      if (!MYSQL_DISABLE_READ_ONLY_TRANSACTIONS) {
+        await connection.query("SET SESSION TRANSACTION READ WRITE");
+      }
 
       return {
         content: [
@@ -320,7 +326,10 @@ async function executeReadOnlyQuery<T>(sql: string): Promise<T> {
     try {
       if (connection) {
         await connection.rollback();
-        await connection.query("SET SESSION TRANSACTION READ WRITE");
+        // Reset to read-write mode (only if we set it to read-only)
+        if (!MYSQL_DISABLE_READ_ONLY_TRANSACTIONS) {
+          await connection.query("SET SESSION TRANSACTION READ WRITE");
+        }
       }
     } catch (cleanupError) {
       // Ignore errors during cleanup

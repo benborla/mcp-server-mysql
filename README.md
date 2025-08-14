@@ -1,8 +1,24 @@
 
-# MCP Server for MySQL based on NodeJS
+# MCP Server for MySQL - Claude Code Edition
 
+> **🚀 This is a modified version optimized for Claude Code with SSH tunnel support**  
+> **Original Author:** [@benborla29](https://github.com/benborla)  
+> **Original Repository:** https://github.com/benborla/mcp-server-mysql  
+> **License:** MIT  
 
-A Model Context Protocol server that provides access to MySQL databases. This server enables LLMs to inspect database schemas and execute SQL queries.
+### Key Features of This Fork:
+- ✅ **Claude Code Integration** - Optimized for use with Anthropic's Claude Code CLI
+- ✅ **SSH Tunnel Support** - Built-in support for SSH tunnels to remote databases
+- ✅ **Auto-start/stop Hooks** - Automatic tunnel management with Claude start/stop
+- ✅ **DDL Operations** - Added `MYSQL_DISABLE_READ_ONLY_TRANSACTIONS` for CREATE TABLE support
+- ✅ **Multi-Project Setup** - Easy configuration for multiple projects with different databases
+
+### Quick Start for Claude Code Users:
+1. **Read the Setup Guide**: See [PROJECT_SETUP_GUIDE.md](PROJECT_SETUP_GUIDE.md) for detailed instructions
+2. **Configure SSH Tunnels**: Set up automatic SSH tunnels for remote databases
+3. **Use with Claude**: Integrated MCP server works seamlessly with Claude Code
+
+A Model Context Protocol server that provides access to MySQL databases through SSH tunnels. This server enables Claude and other LLMs to inspect database schemas and execute SQL queries securely.
 
 ## Table of Contents
 - [Requirements](#requirements)
@@ -473,6 +489,7 @@ For more control over the MCP server's behavior, you can use these advanced conf
 - `ALLOW_UPDATE_OPERATION`: Enable UPDATE operations (default: "false")
 - `ALLOW_DELETE_OPERATION`: Enable DELETE operations (default: "false")
 - `ALLOW_DDL_OPERATION`: Enable DDL operations (default: "false")
+- `MYSQL_DISABLE_READ_ONLY_TRANSACTIONS`: **[NEW]** Disable read-only transaction enforcement (default: "false") ⚠️ **Security Warning:** Only enable this if you need full write capabilities and trust the LLM with your database
 - `SCHEMA_INSERT_PERMISSIONS`: Schema-specific INSERT permissions
 - `SCHEMA_UPDATE_PERMISSIONS`: Schema-specific UPDATE permissions
 - `SCHEMA_DELETE_PERMISSIONS`: Schema-specific DELETE permissions

@@ -15,10 +15,10 @@ COPY package.json pnpm-lock.yaml* /app/
 RUN pnpm install --frozen-lockfile --ignore-scripts
 
 # Copy the rest of the application code
-COPY . /app
+COPY . .
 
 # Build the application
-RUN pnpm run build
+RUN yarn build
 
 # Use a new, clean image for the release
 FROM node:22-alpine

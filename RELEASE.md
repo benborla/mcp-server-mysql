@@ -5,6 +5,7 @@
 ### Major New Features 🎉
 
 #### Multi-DB Support
+
 - Added support for managing multiple databases through a single MCP server instance
 - Detailed documentation available in `README-MULTI-DB.md`
 - Special thanks to [@saarthak-gupta-architect](https://github.com/saarthak-gupta-architect) for this contribution
@@ -17,12 +18,14 @@
 ### Improvements 🔧
 
 #### Enhanced Logging System
+
 - Added optional logging system controlled by `ENABLE_LOGGING` environment variable
 - Log levels: info and error
 - Improved debugging capabilities while maintaining clean output when needed
 - Set `ENABLE_LOGGING=1` to enable logging, leave unset or set to any other value to disable
 
 #### Query Handling Improvements
+
 - Standardized query case handling to prevent column case sensitivity issues
 - All SQL queries are now automatically converted to lowercase before execution
 - Improved reliability when working with different MySQL configurations
@@ -37,6 +40,7 @@
 ### Migration Guide 🔄
 
 1. Update Environment Variables:
+
    ```bash
    # Optional: Enable logging
    ENABLE_LOGGING=1
@@ -52,4 +56,5 @@
 ### Contributors 👥
 
 Special thanks to:
-- [@saarthak-gupta-architect](https://github.com/saarthak-gupta-architect) - Multi-DB Support 
+
+- [@saarthak-gupta-architect](https://github.com/saarthak-gupta-architect) - Multi-DB Support

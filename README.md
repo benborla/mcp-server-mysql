@@ -2,21 +2,23 @@
 
 > **🚀 This is a modified version optimized for Claude Code with SSH tunnel support**  
 > **Original Author:** [@benborla29](https://github.com/benborla)  
-> **Original Repository:** https://github.com/benborla/mcp-server-mysql  
+> **Original Repository:** [https://github.com/benborla/mcp-server-mysql](https://github.com/benborla/mcp-server-mysql)  
 > **License:** MIT  
 
-# MCP Server for MySQL based on NodeJS
+## MCP Server for MySQL based on NodeJS
+
 [![Trust Score](https://archestra.ai/mcp-catalog/api/badge/quality/benborla/mcp-server-mysql)](https://archestra.ai/mcp-catalog/benborla__mcp-server-mysql)
 
+### Key Features of This Fork
 
-### Key Features of This Fork:
 - ✅ **Claude Code Integration** - Optimized for use with Anthropic's Claude Code CLI
 - ✅ **SSH Tunnel Support** - Built-in support for SSH tunnels to remote databases
 - ✅ **Auto-start/stop Hooks** - Automatic tunnel management with Claude start/stop
 - ✅ **DDL Operations** - Added `MYSQL_DISABLE_READ_ONLY_TRANSACTIONS` for CREATE TABLE support
 - ✅ **Multi-Project Setup** - Easy configuration for multiple projects with different databases
 
-### Quick Start for Claude Code Users:
+### Quick Start for Claude Code Users
+
 1. **Read the Setup Guide**: See [PROJECT_SETUP_GUIDE.md](PROJECT_SETUP_GUIDE.md) for detailed instructions
 2. **Configure SSH Tunnels**: Set up automatic SSH tunnels for remote databases
 3. **Use with Claude**: Integrated MCP server works seamlessly with Claude Code

@@ -3,6 +3,7 @@
 This guide explains how to set up database connections for projects using Claude Code with MCP servers, SSH tunnels, and automatic hooks.
 
 ## Table of Contents
+
 - [Overview](#overview)
 - [Prerequisites](#prerequisites)
 - [Step-by-Step Setup](#step-by-step-setup)
@@ -14,6 +15,7 @@ This guide explains how to set up database connections for projects using Claude
 ## Overview
 
 Each project requires three main components for database access through Claude Code:
+
 1. **SSH Tunnel Scripts** - Establish secure connection to remote database
 2. **MCP Configuration** - Configure database access through MCP server
 3. **Hooks** - Automatically start/stop tunnels with Claude
@@ -47,6 +49,7 @@ Each project requires three main components for database access through Claude C
 Create two scripts in your project directory:
 
 #### `start-tunnel-[project].sh`
+
 ```bash
 #!/bin/bash
 
@@ -85,6 +88,7 @@ fi
 ```
 
 #### `stop-tunnel-[project].sh`
+
 ```bash
 #!/bin/bash
 
@@ -104,6 +108,7 @@ fi
 ```
 
 Make scripts executable:
+
 ```bash
 chmod +x start-tunnel-*.sh stop-tunnel-*.sh
 ```
@@ -172,7 +177,8 @@ Choose a unique local port for each project to avoid conflicts:
 ## File Structure
 
 Your project should have this structure:
-```
+
+```bash
 /path/to/your/project/
 ├── .mcp.json                    # MCP configuration
 ├── start-tunnel-[project].sh    # Start SSH tunnel script
@@ -246,6 +252,7 @@ SSH_USER="myuser"
 ## Testing Your Setup
 
 ### 1. Test SSH Tunnel
+
 ```bash
 # Start tunnel manually
 ./start-tunnel-[project].sh
@@ -258,12 +265,14 @@ lsof -i :33XX
 ```
 
 ### 2. Test Database Connection
+
 ```bash
 # Test connection through tunnel
 mysql -h 127.0.0.1 -P 33XX -u db_user -p"password" -D database_name -e "SELECT 'Connection OK' as status;"
 ```
 
 ### 3. Test Claude Integration
+
 ```bash
 # Navigate to project
 cd /path/to/your/project
@@ -279,7 +288,9 @@ claude
 ```
 
 ### 4. Test MCP Server Operations
+
 Once in Claude, test database operations:
+
 ```sql
 # Through MCP server
 CREATE TABLE test_table (
@@ -299,26 +310,31 @@ DROP TABLE test_table;
 ### Common Issues and Solutions
 
 #### 1. SSH Tunnel Fails to Start
+
 - **Check SSH key**: Ensure `~/.ssh/id_rsa` exists and has correct permissions (600)
 - **Test SSH manually**: `ssh -p 1022 user@server.com`
 - **Check port availability**: `lsof -i :33XX`
 
 #### 2. Database Connection Fails
+
 - **Verify tunnel is running**: `lsof -i :33XX`
 - **Check credentials**: Test with mysql client directly
 - **Verify database exists**: `SHOW DATABASES;`
 
 #### 3. MCP Server Fails to Connect
+
 - **Check MCP server is built**: `ls /Users/dimitarklaturov/Dropbox/github/mcp-server-mysql/dist/`
 - **Verify Node.js version**: `node --version` (should be 18+ or 20+)
 - **Check logs**: `claude --debug`
 
 #### 4. Hooks Not Working
+
 - **Check script permissions**: `ls -la *.sh` (should be executable)
 - **Verify script paths**: Use relative paths (`./script.sh`) in .mcp.json
 - **Test scripts manually**: Run start/stop scripts directly
 
 #### 5. Port Conflicts
+
 - **Kill existing process**: `kill $(lsof -ti:33XX)`
 - **Use different port**: Update both scripts and .mcp.json
 
@@ -373,6 +389,7 @@ For each new project:
 ## Support
 
 For issues with:
+
 - **MCP Server**: Check `/Users/dimitarklaturov/Dropbox/github/mcp-server-mysql`
-- **Claude Code**: Run `claude --help` or visit https://docs.anthropic.com/en/docs/claude-code
+- **Claude Code**: Run `claude --help` or visit [https://docs.anthropic.com/en/docs/claude-code](https://docs.anthropic.com/en/docs/claude-code)
 - **SSH Tunnels**: Check server connectivity and SSH key configuration

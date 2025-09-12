@@ -34,6 +34,7 @@ To enable multi-DB mode, simply leave the `MYSQL_DB` environment variable empty:
 2. **Query Any Database**: You can execute queries against any database to which the MySQL user has access.
 
 3. **Schema Qualification Required**: When working in multi-DB mode, you should use fully qualified table names with schema/database prefixes:
+
    ```sql
    -- Use fully qualified table names
    SELECT * FROM database_name.table_name;
@@ -46,6 +47,7 @@ To enable multi-DB mode, simply leave the `MYSQL_DB` environment variable empty:
 4. **Automatic Read-Only Mode**: For safety, multi-DB mode enforces read-only operations by default. This can be customized using schema-specific permissions (see below).
 
 5. **Database Exploration**: You can explore databases using commands like:
+
    ```sql
    -- List all databases
    SHOW DATABASES;
@@ -72,7 +74,7 @@ This new feature allows fine-grained control over which operations are allowed o
 
 Set the following environment variables with a comma-separated list of schema:permission pairs:
 
-```
+```txt
 SCHEMA_INSERT_PERMISSIONS=production:false,development:true,test:true
 SCHEMA_UPDATE_PERMISSIONS=production:false,development:true,test:true
 SCHEMA_DELETE_PERMISSIONS=production:false,development:false,test:true
@@ -80,6 +82,7 @@ SCHEMA_DDL_PERMISSIONS=production:false,development:false,test:true
 ```
 
 This configuration:
+
 - Allows INSERT and UPDATE on development and test databases, but not production
 - Allows DELETE and DDL operations only on the test database
 - Blocks all write operations on the production database
@@ -127,16 +130,19 @@ Here's a complete example configuration with schema-specific permissions:
 ## Environment Variables Summary
 
 ### Multi-DB Mode
+
 - `MYSQL_DB`: Leave empty to enable multi-DB mode
 - `MULTI_DB_WRITE_MODE`: Set to "true" to allow write operations in multi-DB mode without schema-specific permissions (not recommended for security)
 
 ### Schema-Specific Permissions
+
 - `SCHEMA_INSERT_PERMISSIONS`: Control INSERT permissions per schema
 - `SCHEMA_UPDATE_PERMISSIONS`: Control UPDATE permissions per schema
 - `SCHEMA_DELETE_PERMISSIONS`: Control DELETE permissions per schema
 - `SCHEMA_DDL_PERMISSIONS`: Control DDL permissions per schema (CREATE, ALTER, DROP, TRUNCATE)
 
 ### Global Permission Defaults
+
 - `ALLOW_INSERT_OPERATION`: Global default for INSERT permissions
 - `ALLOW_UPDATE_OPERATION`: Global default for UPDATE permissions
 - `ALLOW_DELETE_OPERATION`: Global default for DELETE permissions

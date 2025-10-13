@@ -34,7 +34,9 @@ COPY --from=builder /app/dist /app/dist
 COPY --from=builder /app/package.json /app/
 COPY --from=builder /app/pnpm-lock.yaml* /app/
 
-# Set environment variables
+# Set environment variables for remote MCP server
+ENV IS_REMOTE_MCP=true
+ENV PORT=3000
 ENV MYSQL_HOST=127.0.0.1
 ENV MYSQL_PORT=3306
 ENV MYSQL_USER=root
@@ -42,14 +44,16 @@ ENV MYSQL_PASS=
 ENV MYSQL_DB=db_name
 ENV ALLOW_INSERT_OPERATION=true
 ENV ALLOW_UPDATE_OPERATION=true
-ENV ALLOW_DELETE_OPERATION=false
+ENV ALLOW_DELETE_OPERATION=true
+ENV ALLOW_DDL_OPERATION=true
+ENV REMOTE_SECRET_KEY=change-me
 
 # Install production dependencies only
 # Add --no-optional flag to skip lifecycle scripts like prepare
 RUN pnpm install --prod --frozen-lockfile --ignore-scripts
 
-# # Expose any ports if necessary (e.g., 8080)
-# EXPOSE 8080
+# Expose port for MCP server
+EXPOSE 3000
 
 # Run the server
 ENTRYPOINT ["node", "dist/index.js"]

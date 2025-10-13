@@ -1,0 +1,194 @@
+{
+  "info": {
+    "name": "MySQL MCP Server Collection (Fixed)",
+    "description": "Colección completa para probar el servidor MCP MySQL con headers corregidos",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "version": "2.0.6"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000",
+      "type": "string"
+    },
+    {
+      "key": "secretKey",
+      "value": "eds-123",
+      "type": "string"
+    }
+  ],
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{secretKey}}",
+        "type": "string"
+      }
+    ]
+  },
+  "item": [
+    {
+      "name": "MCP Protocol Tests",
+      "description": "Pruebas básicas del protocolo MCP",
+      "item": [
+        {
+          "name": "List Tools",
+          "description": "Obtiene la lista de herramientas disponibles en el servidor MCP",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json, text/event-stream"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{secretKey}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 1,\n  \"method\": \"tools/list\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/mcp",
+              "host": ["{{baseUrl}}"],
+              "path": ["mcp"]
+            }
+          }
+        },
+        {
+          "name": "List Resources",
+          "description": "Obtiene la lista de recursos (tablas) disponibles",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json, text/event-stream"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{secretKey}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 2,\n  \"method\": \"resources/list\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/mcp",
+              "host": ["{{baseUrl}}"],
+              "path": ["mcp"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Database Queries - SELECT",
+      "description": "Consultas de lectura de la base de datos",
+      "item": [
+        {
+          "name": "Show All Tables",
+          "description": "Muestra todas las tablas disponibles en la base de datos",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json, text/event-stream"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{secretKey}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 4,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"mysql_query\",\n    \"arguments\": {\n      \"sql\": \"SHOW TABLES\"\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/mcp",
+              "host": ["{{baseUrl}}"],
+              "path": ["mcp"]
+            }
+          }
+        },
+        {
+          "name": "Select All Records from Table",
+          "description": "Selecciona todos los registros de una tabla",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Accept",
+                "value": "application/json, text/event-stream"
+              },
+              {
+                "key": "Authorization",
+                "value": "Bearer {{secretKey}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 6,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"mysql_query\",\n    \"arguments\": {\n      \"sql\": \"SELECT * FROM users LIMIT 10\"\n    }\n  }\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/mcp",
+              "host": ["{{baseUrl}}"],
+              "path": ["mcp"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Quick Test - Database Info",
+      "description": "Prueba rápida para verificar conexión",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          },
+          {
+            "key": "Accept",
+            "value": "application/json, text/event-stream"
+          },
+          {
+            "key": "Authorization",
+            "value": "Bearer {{secretKey}}"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"jsonrpc\": \"2.0\",\n  \"id\": 100,\n  \"method\": \"tools/call\",\n  \"params\": {\n    \"name\": \"mysql_query\",\n    \"arguments\": {\n      \"sql\": \"SELECT DATABASE() as current_database, VERSION() as mysql_version, NOW() as current_time\"\n    }\n  }\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/mcp",
+          "host": ["{{baseUrl}}"],
+          "path": ["mcp"]
+        }
+      }
+    }
+  ]
+}

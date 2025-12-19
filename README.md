@@ -541,6 +541,14 @@ When `MYSQL_CONNECTION_STRING` is provided, it takes precedence over individual 
 - `SCHEMA_DDL_PERMISSIONS`: Schema-specific DDL permissions
 - `MULTI_DB_WRITE_MODE`: Enable write operations in multi-DB mode (default: "false")
 
+### Timezone and Date Configuration
+
+- `MYSQL_TIMEZONE`: Set the timezone for date/time values. Accepts formats like `+08:00` (UTC+8), `-05:00` (UTC-5), `Z` (UTC), or `local` (system timezone). Useful for ensuring consistent date/time handling across different server locations.
+- `MYSQL_DATE_STRINGS`: When set to `"true"`, returns date/datetime values as strings instead of JavaScript Date objects. This preserves the exact database values without any timezone conversion, which is particularly useful for:
+  - Applications that need precise control over date formatting
+  - Cross-timezone database operations
+  - Avoiding JavaScript Date timezone quirks
+
 ### Monitoring Configuration
 
 - `MYSQL_ENABLE_LOGGING`: Enable query logging (default: "false")

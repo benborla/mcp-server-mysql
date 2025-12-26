@@ -92,6 +92,14 @@ if (
   toolDescription += " (READ-ONLY)";
 }
 
+// Determine if we're in read-only mode (no write operations enabled)
+const isReadOnly = !(
+  ALLOW_INSERT_OPERATION ||
+  ALLOW_UPDATE_OPERATION ||
+  ALLOW_DELETE_OPERATION ||
+  ALLOW_DDL_OPERATION
+);
+
 // @INFO: Add debug logging for configuration
 log(
   "info",
@@ -153,6 +161,12 @@ export default function createMcpServer({
                 },
               },
               required: ["sql"],
+            },
+            annotations: {
+              readOnlyHint: isReadOnly,
+              idempotentHint: isReadOnly,
+              destructiveHint: !isReadOnly,
+              openWorldHint: false,
             },
           },
         },
@@ -306,6 +320,12 @@ export default function createMcpServer({
               },
             },
             required: ["sql"],
+          },
+          annotations: {
+            readOnlyHint: isReadOnly,
+            idempotentHint: isReadOnly,
+            destructiveHint: !isReadOnly,
+            openWorldHint: false,
           },
         },
       ],

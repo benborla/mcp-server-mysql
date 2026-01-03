@@ -241,6 +241,23 @@ claude mcp add mcp_server_mysql \
    npx @benborla29/mcp-server-mysql
    ```
 
+### Codex CLI
+
+Codex CLI installation is similar to Claude Code
+
+```bash
+codex mcp add mcp_server_mysql \
+  --env MYSQL_HOST="127.0.0.1" \
+  --env MYSQL_PORT="3306" \
+  --env MYSQL_USER="root" \
+  --env MYSQL_PASS="your_password" \
+  --env MYSQL_DB="your_database" \
+  --env ALLOW_INSERT_OPERATION="false" \
+  --env ALLOW_UPDATE_OPERATION="false" \
+  --env ALLOW_DELETE_OPERATION="false" \
+  -- npx -y @benborla29/mcp-server-mysql
+```
+
 ### Using NPM/PNPM
 
 For manual installation:

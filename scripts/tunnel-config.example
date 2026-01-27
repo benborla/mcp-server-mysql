@@ -1,0 +1,24 @@
+# SSH Tunnel Configuration for RDS/VPC Databases
+# Copy this file to tunnel-config.sh and fill in your values
+# Then source it before running the tunnel scripts:
+#   source scripts/tunnel-config.sh && ./scripts/start-tunnel-rds.sh
+
+# Local port to bind the tunnel (default: 3307)
+# Use different ports for multiple databases (3307, 3308, 3309, etc.)
+export LOCAL_PORT=3307
+
+# Bastion/Jump Host Configuration
+export BASTION_USER=ec2-user
+export BASTION_HOST=54.12.34.56          # Your bastion host IP or hostname
+export BASTION_PORT=22                    # SSH port (usually 22)
+
+# RDS Instance Configuration  
+export RDS_ENDPOINT=mydb.abc123xyz.us-east-1.rds.amazonaws.com
+export RDS_PORT=3306
+
+# SSH Key Path
+export SSH_KEY=$HOME/.ssh/my-aws-key.pem
+
+# After tunnel is running, use these in your MCP config:
+# MYSQL_HOST=127.0.0.1
+# MYSQL_PORT=3307

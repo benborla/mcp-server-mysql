@@ -64,6 +64,23 @@ For Cursor IDE, you can install this MCP server with the following command in yo
 
 MCP Get provides a centralized registry of MCP servers and simplifies the installation process.
 
+### Codex CLI
+
+Codex CLI installation is similar to Claude Code below
+
+```bash
+codex mcp add mcp_server_mysql \
+  --env MYSQL_HOST="127.0.0.1" \
+  --env MYSQL_PORT="3306" \
+  --env MYSQL_USER="root" \
+  --env MYSQL_PASS="your_password" \
+  --env MYSQL_DB="your_database" \
+  --env ALLOW_INSERT_OPERATION="false" \
+  --env ALLOW_UPDATE_OPERATION="false" \
+  --env ALLOW_DELETE_OPERATION="false" \
+  -- npx -y @benborla29/mcp-server-mysql
+```
+
 ### Claude Code
 
 #### Option 1: Import from Claude Desktop (Recommended if already configured)

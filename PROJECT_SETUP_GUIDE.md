@@ -322,6 +322,7 @@ DROP TABLE test_table;
 - **Verify database exists**: `SHOW DATABASES;`
 
 #### 3. MCP Server Fails to Connect
+
 - **Check MCP server is built**: `ls /path/to/mcp-server-mysql/dist/`
 - **Verify Node.js version**: `node --version` (should be 18+ or 20+)
 - **Check logs**: `claude --debug`
@@ -388,6 +389,7 @@ For each new project:
 ## Support
 
 For issues with:
+
 - **MCP Server**: Check `/path/to/mcp-server-mysql`
-- **Claude Code**: Run `claude --help` or visit https://docs.anthropic.com/en/docs/claude-code
+- **Claude Code**: Run `claude --help` or visit <https://docs.anthropic.com/en/docs/claude-code>
 - **SSH Tunnels**: Check server connectivity and SSH key configuration

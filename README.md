@@ -528,6 +528,7 @@ For scenarios requiring frequent credential rotation or temporary connections, y
 - `MYSQL_CONNECTION_STRING`: MySQL CLI-format connection string (e.g., `mysql --default-auth=mysql_native_password -A -hHOST -PPORT -uUSER -pPASS database_name`)
 
 When `MYSQL_CONNECTION_STRING` is provided, it takes precedence over individual connection settings. This is particularly useful for:
+
 - Rotating credentials that expire frequently
 - Temporary database connections
 - Quick testing with different database configurations

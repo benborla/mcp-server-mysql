@@ -100,6 +100,18 @@ export const mcpConfig = {
           },
         }
       : {}),
+    // Timezone configuration for date/time handling
+    ...(process.env.MYSQL_TIMEZONE
+      ? {
+          timezone: process.env.MYSQL_TIMEZONE,
+        }
+      : {}),
+    // Return date values as strings instead of JavaScript Date objects
+    ...(process.env.MYSQL_DATE_STRINGS === "true"
+      ? {
+          dateStrings: true,
+        }
+      : {}),
   },
   paths: {
     schema: "schema",

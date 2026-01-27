@@ -154,6 +154,10 @@ export default function createMcpServer({
               },
               required: ["sql"],
             },
+            annotations: {
+              title: "MySQL Query",
+              destructiveHint: true,
+            },
           },
         },
       },
@@ -306,6 +310,10 @@ export default function createMcpServer({
               },
             },
             required: ["sql"],
+          },
+          annotations: {
+            title: "MySQL Query",
+            destructiveHint: true,
           },
         },
       ],

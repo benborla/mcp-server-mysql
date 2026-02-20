@@ -1,13 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import * as path from 'path';
-import * as fs from 'fs';
 import { fileURLToPath } from 'url';
-
-// We'll import this after implementing it
-// For now, define a mock to make tests compile
-const readCACertificate = (filePath: string): Buffer => {
-  throw new Error('Not implemented');
-};
+import { readCACertificate } from '../../src/config/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

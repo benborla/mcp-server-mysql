@@ -120,6 +120,7 @@ log(
       password: config.mysql.password ? "******" : "not set",
       database: config.mysql.database || "MULTI_DB_MODE",
       ssl: process.env.MYSQL_SSL === "true" ? "enabled" : "disabled",
+      sslCA: process.env.MYSQL_SSL_CA || "not set",
       multiDbMode: isMultiDbMode ? "enabled" : "disabled",
     },
     null,

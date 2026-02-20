@@ -133,6 +133,10 @@ export const mcpConfig = {
           ssl: {
             rejectUnauthorized:
               process.env.MYSQL_SSL_REJECT_UNAUTHORIZED === "true",
+            // Add CA certificate if provided
+            ...(process.env.MYSQL_SSL_CA
+              ? { ca: readCACertificate(process.env.MYSQL_SSL_CA) }
+              : {}),
           },
         }
       : {}),

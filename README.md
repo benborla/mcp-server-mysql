@@ -548,6 +548,7 @@ When `MYSQL_CONNECTION_STRING` is provided, it takes precedence over individual 
 - `MYSQL_RATE_LIMIT`: Maximum queries per minute (default: "100")
 - `MYSQL_MAX_QUERY_COMPLEXITY`: Maximum query complexity score (default: "1000")
 - `MYSQL_SSL`: Enable SSL/TLS encryption (default: "false")
+- `MYSQL_SSL_CA`: Path to SSL CA certificate file (PEM format). Only used when `MYSQL_SSL=true`. Required for connecting to MySQL instances with self-signed certificates or custom CAs.
 - `ALLOW_INSERT_OPERATION`: Enable INSERT operations (default: "false")
 - `ALLOW_UPDATE_OPERATION`: Enable UPDATE operations (default: "false")
 - `ALLOW_DELETE_OPERATION`: Enable DELETE operations (default: "false")

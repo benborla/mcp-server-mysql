@@ -1,6 +1,42 @@
 import * as dotenv from "dotenv";
+import * as fs from "fs";
 import { SchemaPermissions } from "../types/index.js";
 import { parseSchemaPermissions, parseMySQLConnectionString } from "../utils/index.js";
+
+/**
+ * Read and validate CA certificate file for SSL connections.
+ * @param filePath - Path to the CA certificate file (PEM format)
+ * @returns Buffer containing the certificate data
+ * @throws Error if file doesn't exist, is empty, or cannot be read
+ */
+function readCACertificate(filePath: string): Buffer {
+  try {
+    // Check if file exists and is readable
+    if (!fs.existsSync(filePath)) {
+      throw new Error(`CA certificate file not found: ${filePath}`);
+    }
+
+    // Read the certificate file
+    const cert = fs.readFileSync(filePath);
+
+    // Basic validation - check it's not empty
+    if (cert.length === 0) {
+      throw new Error(`CA certificate file is empty: ${filePath}`);
+    }
+
+    return cert;
+  } catch (error) {
+    if (error instanceof Error) {
+      // Re-throw our custom errors as-is
+      if (error.message.includes('CA certificate file')) {
+        throw error;
+      }
+      // Wrap other errors (like permission denied)
+      throw new Error(`Failed to read CA certificate: ${error.message}`);
+    }
+    throw error;
+  }
+}
 
 export const MCP_VERSION = "2.0.2";
 
@@ -97,6 +133,10 @@ export const mcpConfig = {
           ssl: {
             rejectUnauthorized:
               process.env.MYSQL_SSL_REJECT_UNAUTHORIZED === "true",
+            // Add CA certificate if provided
+            ...(process.env.MYSQL_SSL_CA
+              ? { ca: readCACertificate(process.env.MYSQL_SSL_CA) }
+              : {}),
           },
         }
       : {}),
@@ -117,3 +157,5 @@ export const mcpConfig = {
     schema: "schema",
   },
 };
+
+export { readCACertificate };

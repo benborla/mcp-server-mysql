@@ -4,38 +4,49 @@ import { SchemaPermissions } from "../types/index.js";
 import { parseSchemaPermissions, parseMySQLConnectionString } from "../utils/index.js";
 
 /**
+ * Read and validate an SSL file (certificate, key, or CA) for SSL connections.
+ * @param filePath - Path to the SSL file (PEM format)
+ * @param label - Human-readable label for error messages (e.g. "CA certificate", "client certificate")
+ * @returns Buffer containing the file data
+ * @throws Error if file doesn't exist, is empty, or cannot be read
+ */
+function readSSLFile(filePath: string, label: string): Buffer {
+  try {
+    // Check if file exists and is readable
+    if (!fs.existsSync(filePath)) {
+      throw new Error(`SSL ${label} file not found: ${filePath}`);
+    }
+
+    // Read the file
+    const data = fs.readFileSync(filePath);
+
+    // Basic validation - check it's not empty
+    if (data.length === 0) {
+      throw new Error(`SSL ${label} file is empty: ${filePath}`);
+    }
+
+    return data;
+  } catch (error) {
+    if (error instanceof Error) {
+      // Re-throw our custom errors as-is
+      if (error.message.startsWith('SSL ')) {
+        throw error;
+      }
+      // Wrap other errors (like permission denied)
+      throw new Error(`Failed to read SSL ${label}: ${error.message}`);
+    }
+    throw error;
+  }
+}
+
+/**
  * Read and validate CA certificate file for SSL connections.
  * @param filePath - Path to the CA certificate file (PEM format)
  * @returns Buffer containing the certificate data
  * @throws Error if file doesn't exist, is empty, or cannot be read
  */
 function readCACertificate(filePath: string): Buffer {
-  try {
-    // Check if file exists and is readable
-    if (!fs.existsSync(filePath)) {
-      throw new Error(`CA certificate file not found: ${filePath}`);
-    }
-
-    // Read the certificate file
-    const cert = fs.readFileSync(filePath);
-
-    // Basic validation - check it's not empty
-    if (cert.length === 0) {
-      throw new Error(`CA certificate file is empty: ${filePath}`);
-    }
-
-    return cert;
-  } catch (error) {
-    if (error instanceof Error) {
-      // Re-throw our custom errors as-is
-      if (error.message.includes('CA certificate file')) {
-        throw error;
-      }
-      // Wrap other errors (like permission denied)
-      throw new Error(`Failed to read CA certificate: ${error.message}`);
-    }
-    throw error;
-  }
+  return readSSLFile(filePath, 'CA certificate');
 }
 
 export const MCP_VERSION = "2.0.2";
@@ -137,6 +148,14 @@ export const mcpConfig = {
             ...(process.env.MYSQL_SSL_CA
               ? { ca: readCACertificate(process.env.MYSQL_SSL_CA) }
               : {}),
+            // Add client certificate for mTLS if provided
+            ...(process.env.MYSQL_SSL_CERT
+              ? { cert: readSSLFile(process.env.MYSQL_SSL_CERT, 'client certificate') }
+              : {}),
+            // Add client private key for mTLS if provided
+            ...(process.env.MYSQL_SSL_KEY
+              ? { key: readSSLFile(process.env.MYSQL_SSL_KEY, 'client private key') }
+              : {}),
           },
         }
       : {}),
@@ -158,4 +177,4 @@ export const mcpConfig = {
   },
 };
 
-export { readCACertificate };
+export { readCACertificate, readSSLFile };

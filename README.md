@@ -549,6 +549,8 @@ When `MYSQL_CONNECTION_STRING` is provided, it takes precedence over individual 
 - `MYSQL_MAX_QUERY_COMPLEXITY`: Maximum query complexity score (default: "1000")
 - `MYSQL_SSL`: Enable SSL/TLS encryption (default: "false")
 - `MYSQL_SSL_CA`: Path to SSL CA certificate file (PEM format). Only used when `MYSQL_SSL=true`. Required for connecting to MySQL instances with self-signed certificates or custom CAs.
+- `MYSQL_SSL_CERT`: Path to the client certificate file (PEM format) for mTLS. Only used when `MYSQL_SSL=true`. Enables mutual TLS (mTLS) authentication, where both the server and client present certificates. Required by some database configurations that enforce client certificate verification.
+- `MYSQL_SSL_KEY`: Path to the client private key file (PEM format) for mTLS. Only used when `MYSQL_SSL=true`. Must correspond to the certificate specified by `MYSQL_SSL_CERT`.
 - `ALLOW_INSERT_OPERATION`: Enable INSERT operations (default: "false")
 - `ALLOW_UPDATE_OPERATION`: Enable UPDATE operations (default: "false")
 - `ALLOW_DELETE_OPERATION`: Enable DELETE operations (default: "false")

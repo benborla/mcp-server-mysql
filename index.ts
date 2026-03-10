@@ -121,6 +121,8 @@ log(
       database: config.mysql.database || "MULTI_DB_MODE",
       ssl: process.env.MYSQL_SSL === "true" ? "enabled" : "disabled",
       sslCA: process.env.MYSQL_SSL_CA || "not set",
+      sslCert: process.env.MYSQL_SSL_CERT || "not set",
+      sslKey: process.env.MYSQL_SSL_KEY || "not set",
       multiDbMode: isMultiDbMode ? "enabled" : "disabled",
     },
     null,

@@ -49,6 +49,10 @@ A Model Context Protocol server that provides access to MySQL databases through 
 - MySQL user with appropriate permissions for the operations you need
 - For write operations: MySQL user with INSERT, UPDATE, and/or DELETE privileges
 
+## Hosted deployment
+
+A hosted deployment is available on [Fronteir AI](https://fronteir.ai/mcp/benborla29-mcp-server-mysql).
+
 ## Installation
 
 ### Using Smithery

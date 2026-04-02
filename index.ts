@@ -190,6 +190,8 @@ export default function createMcpServer({
       log("info", `Connection info: ${connectionInfo}`);
 
       // Query to get all tables
+      // In single-DB mode, restrict queries to the configured database to avoid
+      // performance issues with large numbers of tables across multiple schemas.
       const tablesQuery = `
       SELECT
         table_name as name,
@@ -204,6 +206,7 @@ export default function createMcpServer({
         information_schema.tables
       WHERE
         table_schema NOT IN ('information_schema', 'mysql', 'performance_schema', 'sys')
+        ${!isMultiDbMode && config.mysql.database ? `AND table_schema = '${config.mysql.database}'` : ''}
       ORDER BY
         table_schema, table_name
     `;
@@ -258,9 +261,12 @@ export default function createMcpServer({
         "SELECT column_name, data_type FROM information_schema.columns WHERE table_name = ?";
       let queryParams = [tableName as string];
 
-      if (dbName) {
+      // In single-DB mode, if no dbName is provided in URI, use the configured database
+      const schemaName = dbName || (!isMultiDbMode ? config.mysql.database : null);
+
+      if (schemaName) {
         columnsQuery += " AND table_schema = ?";
-        queryParams.push(dbName);
+        queryParams.push(schemaName);
       }
 
       const results = (await executeQuery(

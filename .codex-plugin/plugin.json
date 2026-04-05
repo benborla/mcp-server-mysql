@@ -1,0 +1,24 @@
+{
+  "name": "mcp-server-mysql",
+  "version": "0.1.0",
+  "description": "Query MySQL databases from Codex via MCP",
+  "author": {
+    "name": "benborla",
+    "url": "https://github.com/benborla/mcp-server-mysql"
+  },
+  "homepage": "https://github.com/benborla/mcp-server-mysql",
+  "repository": "https://github.com/benborla/mcp-server-mysql",
+  "keywords": [
+    "mcp",
+    "codex"
+  ],
+  "mcpServers": "./.mcp.json",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "MySQL MCP Server",
+    "shortDescription": "Query MySQL databases from Codex via MCP",
+    "longDescription": "MCP server providing read-only access to MySQL databases. Inspect schemas and execute read-only queries.",
+    "category": "Database",
+    "websiteURL": "https://github.com/benborla/mcp-server-mysql"
+  }
+}

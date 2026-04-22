@@ -11,7 +11,12 @@ import { extractSchemaFromQuery, getQueryTypes } from "./utils.js";
 
 import * as mysql2 from "mysql2/promise";
 import { log } from "./../utils/index.js";
-import { mcpConfig as config, MYSQL_DISABLE_READ_ONLY_TRANSACTIONS } from "./../config/index.js";
+import {
+  mcpConfig as config,
+  MYSQL_DISABLE_READ_ONLY_TRANSACTIONS,
+  ENABLE_PII_REDACTION,
+} from "./../config/index.js";
+import { redactPII } from "./../security/redact.js";
 
 // Force read-only mode in multi-DB mode unless explicitly configured otherwise
 if (isMultiDbMode && process.env.MULTI_DB_WRITE_MODE !== "true") {
@@ -301,11 +306,13 @@ async function executeReadOnlyQuery<T>(sql: string): Promise<T> {
         await connection.query("SET SESSION TRANSACTION READ WRITE");
       }
 
+      const payload = ENABLE_PII_REDACTION ? redactPII(rows) : rows;
+
       return {
         content: [
           {
             type: "text",
-            text: JSON.stringify(rows, null, 2),
+            text: JSON.stringify(payload, null, 2),
           },
           {
             type: "text",

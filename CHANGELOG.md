@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `ENABLE_PII_REDACTION` environment variable. When set to `"true"`, read-only
+  query results are walked and likely PII values are replaced with shape-preserving
+  partial masks (e.g. `j***@e***.com`, `***-***-0134`, `****-****-****-1111`)
+  before being returned. Detection combines a built-in column-name heuristic
+  (email, ssn, phone, first_name, address, credit_card, password, api_key,
+  token, etc.) with regex scanning of values (email, US phone, SSN, IPv4, and
+  Luhn-verified credit card numbers). Schema/table listings and write-operation
+  response summaries are unaffected. Defaults to `"false"`, preserving existing
+  behavior.
+
 ## Planned Features
 
 - Query Features

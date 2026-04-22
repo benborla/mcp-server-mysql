@@ -78,6 +78,12 @@ export const ALLOW_DDL_OPERATION = process.env.ALLOW_DDL_OPERATION === "true";
 export const MYSQL_DISABLE_READ_ONLY_TRANSACTIONS = 
   process.env.MYSQL_DISABLE_READ_ONLY_TRANSACTIONS === "true";
 
+// PII redaction: when enabled, read-only query results are walked and
+// sensitive values are partially masked before being returned to the client.
+// See src/security/redact.ts for the detection and masking rules.
+export const ENABLE_PII_REDACTION =
+  process.env.ENABLE_PII_REDACTION === "true";
+
 // Schema-specific permissions
 export const SCHEMA_INSERT_PERMISSIONS: SchemaPermissions =
   parseSchemaPermissions(process.env.SCHEMA_INSERT_PERMISSIONS);

@@ -561,6 +561,26 @@ When `MYSQL_CONNECTION_STRING` is provided, it takes precedence over individual 
 - `SCHEMA_DELETE_PERMISSIONS`: Schema-specific DELETE permissions
 - `SCHEMA_DDL_PERMISSIONS`: Schema-specific DDL permissions
 - `MULTI_DB_WRITE_MODE`: Enable write operations in multi-DB mode (default: "false")
+- `ENABLE_PII_REDACTION`: When set to `"true"`, read-only query results are walked and likely PII values are replaced with shape-preserving partial masks before being returned (default: `"false"`). Detection combines a built-in column-name list (`email`, `ssn`, `phone`, `first_name`, `address`, `credit_card`, `password`, `api_key`, `token`, etc.) with regex scanning of values (email, US phone, SSN, IPv4, Luhn-valid credit card). Examples:
+  - `jane.doe@example.com` -> `j***@e***.com`
+  - `415-555-0134` -> `***-***-0134`
+  - `123-45-6789` -> `***-**-6789`
+  - `4111 1111 1111 1111` -> `****-****-****-1111`
+  - `192.168.1.42` -> `***.***.***.42`
+  - Values in columns matched by heuristic but with no known pattern are masked as `J********` (first character preserved, tail masked, capped at 8 asterisks).
+
+  Redaction runs only on read-only query results. Schema/table listing and write-operation response summaries are unaffected. This is a defense-in-depth aid, not a substitute for column-level access controls in MySQL.
+
+  **Known out-of-scope cases** (things the redactor does *not* catch — do not rely on it for these):
+
+  - **Column aliases.** `SELECT first_name AS fn` returns the column key `fn`, which bypasses the column-name heuristic. Generic values without a regex shape (names, addresses) will be returned unmasked.
+  - **Numeric-typed PII.** SSNs or phone numbers stored as `BIGINT` / `INT` are returned as JS numbers; the walker only inspects string values, so these are not redacted.
+  - **JSON / text columns with structured PII.** JSON columns come back as strings. Regex-visible PII inside them (emails, phones, SSNs, IPs, cards) *is* masked, but generic fields like a nested `first_name` are not — the walker does not descend into JSON strings.
+  - **International formats not in the pattern set.** IPv6 addresses, non-US phone numbers (E.164 `+44 …`), non-US national identifiers (UK NI number, EU passport IDs, IBANs), international postal codes — all pass through unchanged.
+  - **Non-Luhn card-like digit runs.** 13–19 digit runs that fail the Luhn check are left alone. This is deliberate (to avoid clobbering order IDs and similar) but means any custom card/account numbering that does not satisfy Luhn will not be redacted.
+  - **Schema and resource listings.** Table names, column names, and `information_schema` responses are returned as-is even when they contain words like `email` or `ssn`.
+  - **Write-operation response summaries.** `Insert successful…`, `Update successful…`, `Delete successful…` strings are not scanned; the server does not echo inserted values into these summaries, but any future change that did would bypass redaction.
+  - **Binary / `Buffer` payloads and `Date` instances.** Both are passed through as-is to preserve their types; embedded PII inside a `Buffer` is not inspected.
 
 ### Timezone and Date Configuration
 

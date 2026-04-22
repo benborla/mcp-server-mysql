@@ -84,6 +84,51 @@ export const MYSQL_DISABLE_READ_ONLY_TRANSACTIONS =
 export const ENABLE_PII_REDACTION =
   process.env.ENABLE_PII_REDACTION === "true";
 
+// Operator-defined additions to the column-name heuristic. Empty entries are
+// filtered out — an empty substring would match every key and mask the entire
+// response. Lowercased at parse time to match the key-lowercasing inside
+// `isPIIColumn`.
+export const PII_EXTRA_COLUMNS: readonly string[] = (
+  process.env.PII_EXTRA_COLUMNS ?? ""
+)
+  .split(",")
+  .map((s) => s.trim().toLowerCase())
+  .filter((s) => s.length > 0);
+
+/**
+ * Parse `PII_EXTRA_COLUMN_PATTERNS` into a list of compiled `RegExp` objects.
+ * Entries are semicolon-separated (not comma) so commas inside character
+ * classes like `[a-z,.]` stay unambiguous. Each entry is a regex *body* — no
+ * slash delimiters, no explicit flags. We compile with `i` so operators do
+ * not have to think about casing, and the runtime lowers the key before
+ * testing anyway.
+ *
+ * Invalid patterns are logged and skipped; one bad entry must not crash the
+ * server or poison the rest of the list.
+ */
+function parseColumnPatterns(raw: string | undefined): RegExp[] {
+  if (!raw) return [];
+  const out: RegExp[] = [];
+  for (const entry of raw.split(";")) {
+    const trimmed = entry.trim();
+    if (!trimmed) continue;
+    try {
+      out.push(new RegExp(trimmed, "i"));
+    } catch (err) {
+      console.error(
+        `[config] ignoring invalid PII_EXTRA_COLUMN_PATTERNS entry "${trimmed}": ${
+          (err as Error).message
+        }`,
+      );
+    }
+  }
+  return out;
+}
+
+export const PII_EXTRA_COLUMN_PATTERNS: readonly RegExp[] = parseColumnPatterns(
+  process.env.PII_EXTRA_COLUMN_PATTERNS,
+);
+
 // Schema-specific permissions
 export const SCHEMA_INSERT_PERMISSIONS: SchemaPermissions =
   parseSchemaPermissions(process.env.SCHEMA_INSERT_PERMISSIONS);

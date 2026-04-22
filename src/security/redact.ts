@@ -141,14 +141,21 @@ export function applyPatternMasks(value: string): string {
   return out;
 }
 
-/** Return true if a column/key name hits any configured PII substring. */
+/**
+ * Return true if a column/key name hits any configured PII rule. Matching is
+ * OR across the two lists: any substring hit OR any regex hit flags the key.
+ */
 export function isPIIColumn(
   key: string,
   columns: readonly string[] = DEFAULT_PII_COLUMNS,
+  patterns: readonly RegExp[] = [],
 ): boolean {
   const lower = key.toLowerCase();
   for (const needle of columns) {
     if (lower.includes(needle)) return true;
+  }
+  for (const pattern of patterns) {
+    if (pattern.test(lower)) return true;
   }
   return false;
 }
@@ -165,7 +172,12 @@ function maskByColumn(value: string): string {
 }
 
 export interface RedactOptions {
+  /** Replaces the default column list entirely. */
   columns?: readonly string[];
+  /** Appended to the default column list. Ignored when `columns` is provided. */
+  extraColumns?: readonly string[];
+  /** Additional regex patterns tested against the lowercased column name. */
+  columnPatterns?: readonly RegExp[];
 }
 
 /**
@@ -173,11 +185,26 @@ export interface RedactOptions {
  * a new structure). Non-string, non-container values are left untouched.
  */
 export function redactPII<T>(value: T, options: RedactOptions = {}): T {
-  const columns = options.columns ?? DEFAULT_PII_COLUMNS;
-  return walk(value, columns, false) as T;
+  // Defence in depth: drop empty-string entries at the redactor too, not just
+  // in the config parser. An empty substring would substring-match every key
+  // and silently mask the entire response for any caller that forgot to
+  // filter its own input.
+  const cleanedExtras = options.extraColumns?.filter((s) => s.length > 0);
+  const columns =
+    options.columns ??
+    (cleanedExtras && cleanedExtras.length > 0
+      ? [...DEFAULT_PII_COLUMNS, ...cleanedExtras]
+      : DEFAULT_PII_COLUMNS);
+  const patterns = options.columnPatterns ?? [];
+  return walk(value, columns, patterns, false) as T;
 }
 
-function walk(value: unknown, columns: readonly string[], parentIsPII: boolean): unknown {
+function walk(
+  value: unknown,
+  columns: readonly string[],
+  patterns: readonly RegExp[],
+  parentIsPII: boolean,
+): unknown {
   if (value == null) return value;
 
   if (typeof value === "string") {
@@ -185,7 +212,7 @@ function walk(value: unknown, columns: readonly string[], parentIsPII: boolean):
   }
 
   if (Array.isArray(value)) {
-    return value.map((item) => walk(item, columns, parentIsPII));
+    return value.map((item) => walk(item, columns, patterns, parentIsPII));
   }
 
   if (typeof value === "object") {
@@ -195,8 +222,8 @@ function walk(value: unknown, columns: readonly string[], parentIsPII: boolean):
 
     const out: Record<string, unknown> = {};
     for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-      const keyIsPII = isPIIColumn(key, columns);
-      out[key] = walk(child, columns, keyIsPII);
+      const keyIsPII = isPIIColumn(key, columns, patterns);
+      out[key] = walk(child, columns, patterns, keyIsPII);
     }
     return out;
   }

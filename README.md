@@ -571,6 +571,24 @@ When `MYSQL_CONNECTION_STRING` is provided, it takes precedence over individual 
 
   Redaction runs only on read-only query results. Schema/table listing and write-operation response summaries are unaffected. This is a defense-in-depth aid, not a substitute for column-level access controls in MySQL.
 
+  **Extending the column heuristic.** Two optional env vars let operators add domain-specific columns without touching code. Both require `ENABLE_PII_REDACTION=true` to have any effect, both are additive to the built-in list, and both reuse the generic mask (`first character + up to 8 asterisks`).
+
+  - `PII_EXTRA_COLUMNS`: comma-separated substrings, case-insensitive, matched against the lowercased column name. Empty or whitespace-only entries are ignored (prevents `PII_EXTRA_COLUMNS=""` from accidentally wiping the whole response). Example:
+
+    ```bash
+    PII_EXTRA_COLUMNS=image_url,signed_url,internal_note
+    ```
+
+  - `PII_EXTRA_COLUMN_PATTERNS`: semicolon-separated JavaScript regex *bodies* — no `/` delimiters, no explicit flags. Each entry is compiled with the `i` flag and tested against the lowercased column name. Invalid patterns are logged to stderr and skipped so one bad entry cannot crash the server. Example:
+
+    ```bash
+    PII_EXTRA_COLUMN_PATTERNS=^(signed|protected)_.*;^.*_token$
+    ```
+
+    Use this when a substring is too blunt — e.g., you need an anchor (`^/$`), alternation, or a character class. Semicolon is the delimiter (not comma) because regex character classes routinely contain commas (`[a-z,.]`), while literal semicolons are rare.
+
+  A column is flagged if it matches ANY built-in substring, OR any `PII_EXTRA_COLUMNS` substring, OR any `PII_EXTRA_COLUMN_PATTERNS` regex. Value-level pattern masks (email / SSN / IP / card) still run first, so an `image_url` whose value contains an email gets the richer mask, not the generic one.
+
   **Known out-of-scope cases** (things the redactor does *not* catch — do not rely on it for these):
 
   - **Column aliases.** `SELECT first_name AS fn` returns the column key `fn`, which bypasses the column-name heuristic. Generic values without a regex shape (names, addresses) will be returned unmasked.

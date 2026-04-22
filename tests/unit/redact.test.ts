@@ -118,6 +118,94 @@ describe("column-name heuristic", () => {
   });
 });
 
+describe("extraColumns / columnPatterns options", () => {
+  it("extraColumns extends the default list without replacing it", () => {
+    const out = redactPII(
+      { image_url: "https://cdn.example.com/foo.jpg", email: "a@b.co", id: 1 },
+      { extraColumns: ["image_url"] },
+    );
+    // image_url is flagged via the extension and gets the generic mask.
+    expect(out.image_url).toBe("h********");
+    // Built-in heuristics still apply.
+    expect(out.email).toBe("a***@b***.co");
+    expect(out.id).toBe(1);
+  });
+
+  it("columnPatterns matches case-insensitively against the key", () => {
+    const out = redactPII(
+      { SIGNED_DOWNLOAD_URL: "https://cdn.example.com/foo", id: 1 },
+      { columnPatterns: [/^signed_/i] },
+    );
+    // Key lowercases to "signed_download_url" which matches /^signed_/.
+    expect(out.SIGNED_DOWNLOAD_URL).toBe("h********");
+    expect(out.id).toBe(1);
+  });
+
+  it("columnPatterns honours anchors and alternation", () => {
+    const out = redactPII(
+      { protected_url: "x", public_url: "y", id: 1 },
+      { columnPatterns: [/^(protected|secret)_url$/i] },
+    );
+    expect(out.protected_url).toBe("*"); // single char → single asterisk
+    expect(out.public_url).toBe("y"); // unmatched → untouched
+    expect(out.id).toBe(1);
+  });
+
+  it("extraColumns and columnPatterns combine via OR", () => {
+    // Picks keys that do NOT hit any built-in substring ("token" would, for
+    // example), so we can isolate the contributions of each option.
+    const out = redactPII(
+      { image_url: "foo", signed_blob: "bar", plain: "baz", id: 1 },
+      {
+        extraColumns: ["image_url"],
+        columnPatterns: [/^signed_/i],
+      },
+    );
+    expect(out.image_url).toBe("f**");
+    expect(out.signed_blob).toBe("b**");
+    expect(out.plain).toBe("baz");
+    expect(out.id).toBe(1);
+  });
+
+  it("explicit `columns` overrides `extraColumns` but `columnPatterns` still applies", () => {
+    const out = redactPII(
+      { email: "a@b.co", signed_blob: "abc", id: 1 },
+      {
+        columns: ["does_not_match"],
+        extraColumns: ["email"], // ignored because `columns` was provided
+        columnPatterns: [/^signed_/i],
+      },
+    );
+    // The email value regex still fires (pattern masking is independent of
+    // the column list), so value-level masking still runs.
+    expect(out.email).toBe("a***@b***.co");
+    // `columns` replacement would have missed `signed_blob`, but the regex
+    // layer still catches it.
+    expect(out.signed_blob).toBe("a**");
+    expect(out.id).toBe(1);
+  });
+
+  it("empty-string entry in extraColumns does NOT match every key", () => {
+    // Without an empty-string filter in the parser / caller, an empty
+    // substring would match every column name via `includes("")` and mask
+    // the entire row. This guards the contract.
+    const out = redactPII(
+      { id: 1, status: "active", notes: "plain text" },
+      { extraColumns: [""] },
+    );
+    expect(out.status).toBe("active");
+    expect(out.notes).toBe("plain text");
+    expect(out.id).toBe(1);
+  });
+
+  it("empty columnPatterns list is a no-op", () => {
+    // `signed_blob` is chosen because it hits NO built-in heuristic, so if
+    // this assertion fails we know the regex layer leaked.
+    const input = { signed_blob: "keep me", id: 1 };
+    expect(redactPII(input, { columnPatterns: [] })).toEqual(input);
+  });
+});
+
 describe("generic mask", () => {
   it("keeps the first character and caps the masked tail at 8", () => {
     expect(maskGeneric("")).toBe("");

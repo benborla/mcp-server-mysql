@@ -15,6 +15,8 @@ import {
   mcpConfig as config,
   MYSQL_DISABLE_READ_ONLY_TRANSACTIONS,
   ENABLE_PII_REDACTION,
+  PII_EXTRA_COLUMNS,
+  PII_EXTRA_COLUMN_PATTERNS,
 } from "./../config/index.js";
 import { redactPII } from "./../security/redact.js";
 
@@ -306,7 +308,12 @@ async function executeReadOnlyQuery<T>(sql: string): Promise<T> {
         await connection.query("SET SESSION TRANSACTION READ WRITE");
       }
 
-      const payload = ENABLE_PII_REDACTION ? redactPII(rows) : rows;
+      const payload = ENABLE_PII_REDACTION
+        ? redactPII(rows, {
+            extraColumns: PII_EXTRA_COLUMNS,
+            columnPatterns: PII_EXTRA_COLUMN_PATTERNS,
+          })
+        : rows;
 
       return {
         content: [

@@ -13,6 +13,16 @@
   Luhn-verified credit card numbers). Schema/table listings and write-operation
   response summaries are unaffected. Defaults to `"false"`, preserving existing
   behavior.
+- `PII_EXTRA_COLUMNS` environment variable. Comma-separated, case-insensitive
+  substrings appended to the built-in PII column list. Empty/whitespace entries
+  are ignored to avoid a whole-row-wipe footgun. Only active when
+  `ENABLE_PII_REDACTION=true`.
+- `PII_EXTRA_COLUMN_PATTERNS` environment variable. Semicolon-separated
+  JavaScript regex bodies (no delimiters/flags — compiled with the `i` flag)
+  tested against the lowercased column name. Semicolon delimiter avoids
+  ambiguity with commas inside regex character classes. Invalid patterns are
+  logged and skipped, so one bad entry cannot crash the server. Only active
+  when `ENABLE_PII_REDACTION=true`.
 
 ## Planned Features
 

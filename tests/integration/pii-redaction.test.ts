@@ -35,6 +35,11 @@ const SEED_ROWS = [
     credit_card: "4111111111111111",
     first_name: "Ada Lovelace",
     notes: "Reach jane.doe@example.com from 192.168.1.42 or 415-555-0134",
+    // Realistic-looking asset URLs used to exercise the operator-defined
+    // extension mechanisms. Neither column is on the built-in PII list.
+    image_url: "https://cdn.example.com/assets/hero-abc123.jpg",
+    signed_download_url:
+      "https://cdn.example.com/downloads/receipt?sig=deadbeef12345",
   },
   {
     email: "john@acme.io",
@@ -44,6 +49,9 @@ const SEED_ROWS = [
     credit_card: "5500000000000004",
     first_name: "Grace Hopper",
     notes: "Card 5500000000000004 last seen from 10.0.0.7",
+    image_url: "https://cdn.example.com/assets/hero-xyz789.jpg",
+    signed_download_url:
+      "https://cdn.example.com/downloads/invoice?sig=cafef00d67890",
   },
 ];
 
@@ -107,7 +115,9 @@ describe("PII Redaction – integration", () => {
           ip_address VARCHAR(64),
           credit_card VARCHAR(32),
           first_name VARCHAR(128),
-          notes TEXT
+          notes TEXT,
+          image_url VARCHAR(255),
+          signed_download_url VARCHAR(255)
         )
       `);
     } finally {
@@ -122,8 +132,9 @@ describe("PII Redaction – integration", () => {
       for (const row of SEED_ROWS) {
         await conn.query(
           `INSERT INTO ${DB_NAME}.pii_users
-             (email, phone, ssn, ip_address, credit_card, first_name, notes)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
+             (email, phone, ssn, ip_address, credit_card, first_name, notes,
+              image_url, signed_download_url)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             row.email,
             row.phone,
@@ -132,6 +143,8 @@ describe("PII Redaction – integration", () => {
             row.credit_card,
             row.first_name,
             row.notes,
+            row.image_url,
+            row.signed_download_url,
           ],
         );
       }
@@ -243,5 +256,72 @@ describe("PII Redaction – integration", () => {
     // so it's both unredacted AND leak-free. We verify both invariants.
     expect(result.content[0].text).toContain("Insert successful");
     expect(result.content[0].text).not.toContain("new.user@example.com");
+  });
+
+  it("PII_EXTRA_COLUMNS masks operator-defined columns only when set", async () => {
+    // When only the master flag is on, non-built-in columns pass through.
+    const base = await reloadDbModule({
+      ENABLE_PII_REDACTION: "true",
+      PII_EXTRA_COLUMNS: undefined,
+      PII_EXTRA_COLUMN_PATTERNS: undefined,
+    });
+    const unmasked = await base.executeReadOnlyQuery<any>(
+      `SELECT image_url, signed_download_url FROM ${DB_NAME}.pii_users ORDER BY id`,
+    );
+    const unmaskedRow = JSON.parse(unmasked.content[0].text)[0];
+    expect(unmaskedRow.image_url).toContain("cdn.example.com");
+    expect(unmaskedRow.signed_download_url).toContain("cdn.example.com");
+
+    // With PII_EXTRA_COLUMNS=image_url, only image_url is masked.
+    const { executeReadOnlyQuery } = await reloadDbModule({
+      ENABLE_PII_REDACTION: "true",
+      PII_EXTRA_COLUMNS: "image_url",
+      PII_EXTRA_COLUMN_PATTERNS: undefined,
+    });
+    const masked = await executeReadOnlyQuery<any>(
+      `SELECT image_url, signed_download_url FROM ${DB_NAME}.pii_users ORDER BY id`,
+    );
+    const maskedRow = JSON.parse(masked.content[0].text)[0];
+    expect(maskedRow.image_url).not.toContain("cdn.example.com");
+    expect(maskedRow.image_url.startsWith("h")).toBe(true);
+    // signed_download_url stays unmasked — the extras list is additive but
+    // narrowly scoped to what the operator listed.
+    expect(maskedRow.signed_download_url).toContain("cdn.example.com");
+  });
+
+  it("PII_EXTRA_COLUMN_PATTERNS masks columns matched by the regex", async () => {
+    const { executeReadOnlyQuery } = await reloadDbModule({
+      ENABLE_PII_REDACTION: "true",
+      PII_EXTRA_COLUMNS: undefined,
+      PII_EXTRA_COLUMN_PATTERNS: "^signed_.*",
+    });
+    const result = await executeReadOnlyQuery<any>(
+      `SELECT image_url, signed_download_url FROM ${DB_NAME}.pii_users ORDER BY id`,
+    );
+    const row = JSON.parse(result.content[0].text)[0];
+    // Pattern catches signed_download_url but not image_url — proves the
+    // regex layer is independent of the substring layer.
+    expect(row.signed_download_url).not.toContain("cdn.example.com");
+    expect(row.signed_download_url.startsWith("h")).toBe(true);
+    expect(row.image_url).toContain("cdn.example.com");
+  });
+
+  it("invalid PII_EXTRA_COLUMN_PATTERNS entries do not crash the server", async () => {
+    // Garbage regex alongside a valid one: the garbage should be logged and
+    // skipped, the valid pattern should still fire, and the query must run.
+    const { executeReadOnlyQuery } = await reloadDbModule({
+      ENABLE_PII_REDACTION: "true",
+      PII_EXTRA_COLUMNS: undefined,
+      PII_EXTRA_COLUMN_PATTERNS: "[unclosed(regex;^signed_.*",
+    });
+    const result = await executeReadOnlyQuery<any>(
+      `SELECT email, signed_download_url FROM ${DB_NAME}.pii_users ORDER BY id`,
+    );
+    expect(result.isError).toBe(false);
+    const row = JSON.parse(result.content[0].text)[0];
+    // Built-in redaction still works...
+    expect(row.email).toBe("j***@e***.com");
+    // ...and the valid regex entry was still applied.
+    expect(row.signed_download_url.startsWith("h")).toBe(true);
   });
 });

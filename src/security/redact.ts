@@ -14,6 +14,8 @@
  *      gated by a Luhn check to reduce false positives.
  */
 
+import { log } from "../utils/index.js";
+
 /**
  * Default substrings matched (case-insensitive) against object keys to flag a
  * field as PII. Matching is substring-based so "user_email" and "EmailAddr"
@@ -142,6 +144,25 @@ export function applyPatternMasks(value: string): string {
 }
 
 /**
+ * Internal helper: returns a human-readable description of the first matching
+ * PII rule, or `null` if no rule matches.
+ */
+function matchPIIColumn(
+  key: string,
+  columns: readonly string[],
+  patterns: readonly RegExp[],
+): string | null {
+  const lower = key.toLowerCase();
+  for (const needle of columns) {
+    if (lower.includes(needle)) return `substring "${needle}"`;
+  }
+  for (const pattern of patterns) {
+    if (pattern.test(lower)) return `pattern ${pattern}`;
+  }
+  return null;
+}
+
+/**
  * Return true if a column/key name hits any configured PII rule. Matching is
  * OR across the two lists: any substring hit OR any regex hit flags the key.
  */
@@ -150,14 +171,7 @@ export function isPIIColumn(
   columns: readonly string[] = DEFAULT_PII_COLUMNS,
   patterns: readonly RegExp[] = [],
 ): boolean {
-  const lower = key.toLowerCase();
-  for (const needle of columns) {
-    if (lower.includes(needle)) return true;
-  }
-  for (const pattern of patterns) {
-    if (pattern.test(lower)) return true;
-  }
-  return false;
+  return matchPIIColumn(key, columns, patterns) !== null;
 }
 
 /**
@@ -196,23 +210,35 @@ export function redactPII<T>(value: T, options: RedactOptions = {}): T {
       ? [...DEFAULT_PII_COLUMNS, ...cleanedExtras]
       : DEFAULT_PII_COLUMNS);
   const patterns = options.columnPatterns ?? [];
-  return walk(value, columns, patterns, false) as T;
+  const stats = { fields: 0, columns: new Set<string>() };
+  const result = walk(value, columns, patterns, null, stats) as T;
+  if (stats.fields > 0) {
+    log("info", `[redact] masked ${stats.fields} field(s) across column(s): ${[...stats.columns].join(", ")}`);
+  } else {
+    log("info", "[redact] no PII fields detected");
+  }
+  return result;
 }
 
 function walk(
   value: unknown,
   columns: readonly string[],
   patterns: readonly RegExp[],
-  parentIsPII: boolean,
+  parentMatch: string | null,
+  stats: { fields: number; columns: Set<string> },
 ): unknown {
   if (value == null) return value;
 
   if (typeof value === "string") {
-    return parentIsPII ? maskByColumn(value) : applyPatternMasks(value);
+    if (parentMatch !== null) {
+      stats.fields++;
+      return maskByColumn(value);
+    }
+    return applyPatternMasks(value);
   }
 
   if (Array.isArray(value)) {
-    return value.map((item) => walk(item, columns, patterns, parentIsPII));
+    return value.map((item) => walk(item, columns, patterns, parentMatch, stats));
   }
 
   if (typeof value === "object") {
@@ -222,8 +248,12 @@ function walk(
 
     const out: Record<string, unknown> = {};
     for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
-      const keyIsPII = isPIIColumn(key, columns, patterns);
-      out[key] = walk(child, columns, patterns, keyIsPII);
+      const match = matchPIIColumn(key, columns, patterns);
+      if (match !== null) {
+        log("info", `[redact] column "${key}" matched PII rule: ${match}`);
+        stats.columns.add(key);
+      }
+      out[key] = walk(child, columns, patterns, match, stats);
     }
     return out;
   }

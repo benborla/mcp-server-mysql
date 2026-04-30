@@ -89,4 +89,196 @@ function nodeHasColumnStar(node: unknown): boolean {
   return false;
 }
 
-export { extractSchemaFromQuery, getQueryTypes, containsSelectStar };
+/**
+ * Reference to a column in the parsed SQL. `table` is the table-qualifier from
+ * the SQL (alias or table name), or `null` for an unqualified reference.
+ */
+export interface PIIColumnReference {
+  table: string | null;
+  column: string;
+}
+
+/**
+ * Walk the AST of `sql` and return every `column_ref` whose column name passes
+ * `isPII`. Walks naturally cover SELECT projection, WHERE, JOIN ON, GROUP BY,
+ * HAVING, ORDER BY, subqueries, CTEs, and `INSERT ... SELECT` because we
+ * recurse into every nested object/array regardless of key name.
+ *
+ * Returns `[]` on parse failure (fail-open, matching `containsSelectStar`).
+ * Downstream `executeQuery` will surface the parse error in its normal path;
+ * we don't want a parser hiccup here to block otherwise valid queries.
+ *
+ * Duplicates are de-duplicated on `table`+`column` so the rejection message
+ * stays compact when a column is referenced multiple times.
+ */
+function findPIIColumnReferences(
+  sql: string,
+  isPII: (column: string) => boolean,
+): PIIColumnReference[] {
+  let astOrArray: AST | AST[];
+  try {
+    astOrArray = parser.astify(sql, { database: "mysql" });
+  } catch {
+    return [];
+  }
+  const statements = Array.isArray(astOrArray) ? astOrArray : [astOrArray];
+  const seen = new Set<string>();
+  const hits: PIIColumnReference[] = [];
+  for (const stmt of statements) {
+    collectPIIColumnRefs(stmt, isPII, seen, hits);
+  }
+  return hits;
+}
+
+function collectPIIColumnRefs(
+  node: unknown,
+  isPII: (column: string) => boolean,
+  seen: Set<string>,
+  out: PIIColumnReference[],
+): void {
+  if (node == null || typeof node !== "object") return;
+  if (node instanceof Date) return;
+
+  const obj = node as Record<string, unknown>;
+
+  if (
+    obj.type === "column_ref" &&
+    typeof obj.column === "string" &&
+    obj.column !== "*" &&
+    isPII(obj.column)
+  ) {
+    const table = typeof obj.table === "string" ? obj.table : null;
+    const key = `${table ?? ""}.${obj.column}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      out.push({ table, column: obj.column });
+    }
+  }
+
+  for (const value of Object.values(obj)) {
+    if (Array.isArray(value)) {
+      for (const item of value) collectPIIColumnRefs(item, isPII, seen, out);
+    } else if (value && typeof value === "object") {
+      collectPIIColumnRefs(value, isPII, seen, out);
+    }
+  }
+}
+
+/**
+ * Categorisation of a query that would let the LLM enumerate column names.
+ * `null` means the query is not an introspection query (under our policy).
+ */
+export type IntrospectionKind =
+  | "show_columns"
+  | "show_create"
+  | "show_index"
+  | "show_other"
+  | "describe"
+  | "information_schema"
+  | "mysql_schema";
+
+export interface IntrospectionResult {
+  kind: IntrospectionKind | null;
+}
+
+// Statements that node-sql-parser can't parse but still leak schema (e.g.
+// `SHOW FULL COLUMNS FROM users`, `SHOW FIELDS FROM users`). We pre-screen
+// for these via a textual check before falling through to the AST walk.
+const SHOW_INTROSPECTION_RE =
+  /^\s*SHOW\s+(?:FULL\s+)?(COLUMNS|FIELDS|CREATE\s+TABLE|CREATE\s+VIEW|INDEX(?:ES)?|KEYS|TABLE\s+STATUS|TABLES)\b/i;
+const DESCRIBE_RE = /^\s*(?:DESCRIBE|DESC|EXPLAIN)\s+/i;
+
+/**
+ * Identify queries that expose schema/column metadata. Combines a textual
+ * pre-screen (catches statements the parser doesn't understand, like
+ * `SHOW FULL COLUMNS FROM users`) with an AST walk (catches `db.table`
+ * references to `information_schema` or `mysql` anywhere in the query,
+ * including inside subqueries and joins).
+ *
+ * On parse failure with no textual match, returns `{ kind: null }` — the
+ * downstream executor will reject or surface the parse error normally.
+ */
+function isIntrospectionQuery(sql: string): IntrospectionResult {
+  const showMatch = sql.match(SHOW_INTROSPECTION_RE);
+  if (showMatch) {
+    const keyword = showMatch[1].toUpperCase().replace(/\s+/g, " ");
+    if (keyword.startsWith("COLUMNS") || keyword.startsWith("FIELDS")) {
+      return { kind: "show_columns" };
+    }
+    if (keyword.startsWith("CREATE")) {
+      return { kind: "show_create" };
+    }
+    if (
+      keyword.startsWith("INDEX") ||
+      keyword.startsWith("KEYS")
+    ) {
+      return { kind: "show_index" };
+    }
+    return { kind: "show_other" };
+  }
+  if (DESCRIBE_RE.test(sql)) {
+    return { kind: "describe" };
+  }
+
+  let astOrArray: AST | AST[];
+  try {
+    astOrArray = parser.astify(sql, { database: "mysql" });
+  } catch {
+    return { kind: null };
+  }
+  const statements = Array.isArray(astOrArray) ? astOrArray : [astOrArray];
+  for (const stmt of statements) {
+    const kind = findIntrospectionKind(stmt);
+    if (kind) return { kind };
+  }
+  return { kind: null };
+}
+
+function findIntrospectionKind(node: unknown): IntrospectionKind | null {
+  if (node == null || typeof node !== "object") return null;
+  if (node instanceof Date) return null;
+
+  const obj = node as Record<string, unknown>;
+
+  if (obj.type === "show") {
+    const keyword =
+      typeof obj.keyword === "string" ? obj.keyword.toLowerCase() : "";
+    if (keyword === "columns" || keyword === "fields") return "show_columns";
+    if (keyword === "create") return "show_create";
+    if (keyword === "index" || keyword === "keys") return "show_index";
+    return "show_other";
+  }
+  if (obj.type === "desc" || obj.type === "describe") {
+    return "describe";
+  }
+
+  // Reference to a metadata schema anywhere in the AST (`from`, JOIN target,
+  // subquery, etc.). The AST stores the schema name in lowercase already, but
+  // we lower again defensively for portability across parser versions.
+  if (typeof obj.db === "string") {
+    const db = obj.db.toLowerCase();
+    if (db === "information_schema") return "information_schema";
+    if (db === "mysql") return "mysql_schema";
+  }
+
+  for (const value of Object.values(obj)) {
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const kind = findIntrospectionKind(item);
+        if (kind) return kind;
+      }
+    } else if (value && typeof value === "object") {
+      const kind = findIntrospectionKind(value);
+      if (kind) return kind;
+    }
+  }
+  return null;
+}
+
+export {
+  extractSchemaFromQuery,
+  getQueryTypes,
+  containsSelectStar,
+  findPIIColumnReferences,
+  isIntrospectionQuery,
+};

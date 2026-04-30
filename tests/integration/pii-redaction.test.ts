@@ -183,8 +183,13 @@ describe("PII Redaction – integration", () => {
   });
 
   it("masks PII in read-only results when ENABLE_PII_REDACTION=true", async () => {
+    // Opt out of the column-reference guard: this test exists to exercise
+    // the value-level masking pipeline, which is what we exercise by
+    // selecting PII columns explicitly. The column-reference guard has
+    // its own dedicated tests further down in this file.
     const { executeReadOnlyQuery } = await reloadDbModule({
       ENABLE_PII_REDACTION: "true",
+      PII_ALLOW_REFERENCES: "true",
     });
 
     // Explicit projection: redaction is enabled, so SELECT * is gated. Listing
@@ -218,8 +223,11 @@ describe("PII Redaction – integration", () => {
   });
 
   it("serialized response leaks no raw PII (adversarial re-scan)", async () => {
+    // See note on the previous test: opt out of the column-reference guard
+    // so this test focuses on the value-level redactor invariants.
     const { executeReadOnlyQuery } = await reloadDbModule({
       ENABLE_PII_REDACTION: "true",
+      PII_ALLOW_REFERENCES: "true",
     });
     const { applyPatternMasks } = await import(
       "../../dist/src/security/redact.js"
@@ -279,11 +287,16 @@ describe("PII Redaction – integration", () => {
     expect(unmaskedRow.image_url).toContain("cdn.example.com");
     expect(unmaskedRow.signed_download_url).toContain("cdn.example.com");
 
-    // With PII_EXTRA_COLUMNS=image_url, only image_url is masked.
+    // With PII_EXTRA_COLUMNS=image_url, only image_url is masked. We opt
+    // out of the column-reference guard here because this test is
+    // specifically exercising the value-level masking layer; once the
+    // operator marks `image_url` as PII, the reference guard would (by
+    // design) reject the projection.
     const { executeReadOnlyQuery } = await reloadDbModule({
       ENABLE_PII_REDACTION: "true",
       PII_EXTRA_COLUMNS: "image_url",
       PII_EXTRA_COLUMN_PATTERNS: undefined,
+      PII_ALLOW_REFERENCES: "true",
     });
     const masked = await executeReadOnlyQuery<any>(
       `SELECT image_url, signed_download_url FROM ${DB_NAME}.pii_users ORDER BY id`,
@@ -297,10 +310,13 @@ describe("PII Redaction – integration", () => {
   });
 
   it("PII_EXTRA_COLUMN_PATTERNS masks columns matched by the regex", async () => {
+    // Opt out of the column-reference guard for the same reason as the
+    // PII_EXTRA_COLUMNS test above.
     const { executeReadOnlyQuery } = await reloadDbModule({
       ENABLE_PII_REDACTION: "true",
       PII_EXTRA_COLUMNS: undefined,
       PII_EXTRA_COLUMN_PATTERNS: "^signed_.*",
+      PII_ALLOW_REFERENCES: "true",
     });
     const result = await executeReadOnlyQuery<any>(
       `SELECT image_url, signed_download_url FROM ${DB_NAME}.pii_users ORDER BY id`,
@@ -316,10 +332,13 @@ describe("PII Redaction – integration", () => {
   it("invalid PII_EXTRA_COLUMN_PATTERNS entries do not crash the server", async () => {
     // Garbage regex alongside a valid one: the garbage should be logged and
     // skipped, the valid pattern should still fire, and the query must run.
+    // The reference guard is opted out so the SELECT email projection — used
+    // here purely as a baseline-redaction check — isn't rejected.
     const { executeReadOnlyQuery } = await reloadDbModule({
       ENABLE_PII_REDACTION: "true",
       PII_EXTRA_COLUMNS: undefined,
       PII_EXTRA_COLUMN_PATTERNS: "[unclosed(regex;^signed_.*",
+      PII_ALLOW_REFERENCES: "true",
     });
     const result = await executeReadOnlyQuery<any>(
       `SELECT email, signed_download_url FROM ${DB_NAME}.pii_users ORDER BY id`,
@@ -403,6 +422,167 @@ describe("PII Redaction – integration", () => {
     });
     const result = await executeReadOnlyQuery<any>(
       `SELECT * FROM ${DB_NAME}.pii_users ORDER BY id`,
+    );
+    expect(result.isError).toBe(false);
+  });
+
+  // ---- PII column-reference gate ----------------------------------------
+  // When redaction is on, any reference to a PII column anywhere in the
+  // query (projection, WHERE, ORDER BY, subquery, ...) is rejected so the
+  // LLM can't bypass the result-key redactor by aliasing the projection
+  // (the original `CONCAT(first_name, last_name) AS NAME` failure).
+
+  it("rejects the alias-bypass query (CONCAT(first_name, last_name) AS NAME)", async () => {
+    // Reproduces the exact failure that prompted this guard. The AS NAME
+    // alias would render the result-key redactor blind; the AST walk does
+    // not care about the output alias and rejects on the input columns.
+    const { executeReadOnlyQuery } = await reloadDbModule({
+      ENABLE_PII_REDACTION: "true",
+      PII_ALLOW_REFERENCES: undefined,
+    });
+    const result = await executeReadOnlyQuery<any>(
+      `SELECT id, CONCAT(COALESCE(first_name, ''), ' ', COALESCE(first_name, '')) AS NAME
+         FROM ${DB_NAME}.pii_users`,
+    );
+    expect(result.isError).toBe(true);
+    // Error names the offending column so the LLM can self-correct.
+    expect(result.content[0].text).toContain("first_name");
+    expect(result.content[0].text).toContain("PII_ALLOW_REFERENCES");
+    // And no plain-text PII appears in the rejection.
+    expect(result.content[0].text).not.toContain("Ada Lovelace");
+  });
+
+  it("rejects PII referenced only in WHERE", async () => {
+    // Side-channel: the LLM could otherwise infer PII via observable row
+    // counts (e.g. existence of a user with a given email).
+    const { executeReadOnlyQuery } = await reloadDbModule({
+      ENABLE_PII_REDACTION: "true",
+      PII_ALLOW_REFERENCES: undefined,
+    });
+    const result = await executeReadOnlyQuery<any>(
+      `SELECT id FROM ${DB_NAME}.pii_users WHERE email = 'jane.doe@example.com'`,
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("email");
+  });
+
+  it("rejects PII referenced only in ORDER BY", async () => {
+    const { executeReadOnlyQuery } = await reloadDbModule({
+      ENABLE_PII_REDACTION: "true",
+      PII_ALLOW_REFERENCES: undefined,
+    });
+    const result = await executeReadOnlyQuery<any>(
+      `SELECT id FROM ${DB_NAME}.pii_users ORDER BY first_name`,
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("first_name");
+  });
+
+  it("PII_ALLOW_REFERENCES=true opts out of the column-reference gate", async () => {
+    const { executeReadOnlyQuery } = await reloadDbModule({
+      ENABLE_PII_REDACTION: "true",
+      PII_ALLOW_REFERENCES: "true",
+    });
+    const result = await executeReadOnlyQuery<any>(
+      `SELECT id, first_name FROM ${DB_NAME}.pii_users ORDER BY id`,
+    );
+    expect(result.isError).toBe(false);
+    // Override lifts the projection policy but value masking still runs.
+    const rows = JSON.parse(result.content[0].text);
+    expect(rows[0].first_name).not.toBe("Ada Lovelace");
+  });
+
+  it("does not block PII references when ENABLE_PII_REDACTION is unset", async () => {
+    const { executeReadOnlyQuery } = await reloadDbModule({
+      ENABLE_PII_REDACTION: undefined,
+      PII_ALLOW_REFERENCES: undefined,
+    });
+    const result = await executeReadOnlyQuery<any>(
+      `SELECT id, first_name FROM ${DB_NAME}.pii_users ORDER BY id`,
+    );
+    expect(result.isError).toBe(false);
+  });
+
+  // ---- Introspection gate -----------------------------------------------
+  // When redaction is on, schema-introspection statements are rejected so
+  // the LLM can't enumerate PII column names by running SQL directly
+  // (it should use the filtered mysql://tables/{name} resource instead).
+
+  it("rejects SHOW COLUMNS FROM <table>", async () => {
+    const { executeReadOnlyQuery } = await reloadDbModule({
+      ENABLE_PII_REDACTION: "true",
+      PII_ALLOW_INTROSPECTION: undefined,
+    });
+    const result = await executeReadOnlyQuery<any>(
+      `SHOW COLUMNS FROM ${DB_NAME}.pii_users`,
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("introspection");
+    expect(result.content[0].text).toContain("mysql://tables");
+    expect(result.content[0].text).toContain("PII_ALLOW_INTROSPECTION");
+  });
+
+  it("rejects SHOW FULL COLUMNS (which the SQL parser can't parse)", async () => {
+    // node-sql-parser refuses `SHOW FULL COLUMNS`; the textual pre-screen
+    // is what catches it. This test pins that behaviour.
+    const { executeReadOnlyQuery } = await reloadDbModule({
+      ENABLE_PII_REDACTION: "true",
+      PII_ALLOW_INTROSPECTION: undefined,
+    });
+    const result = await executeReadOnlyQuery<any>(
+      `SHOW FULL COLUMNS FROM ${DB_NAME}.pii_users`,
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("introspection");
+  });
+
+  it("rejects DESCRIBE <table>", async () => {
+    const { executeReadOnlyQuery } = await reloadDbModule({
+      ENABLE_PII_REDACTION: "true",
+      PII_ALLOW_INTROSPECTION: undefined,
+    });
+    const result = await executeReadOnlyQuery<any>(
+      `DESCRIBE ${DB_NAME}.pii_users`,
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("introspection");
+  });
+
+  it("rejects SELECT FROM information_schema.columns", async () => {
+    const { executeReadOnlyQuery } = await reloadDbModule({
+      ENABLE_PII_REDACTION: "true",
+      PII_ALLOW_INTROSPECTION: undefined,
+    });
+    const result = await executeReadOnlyQuery<any>(
+      `SELECT column_name FROM information_schema.columns WHERE table_name = 'pii_users'`,
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("introspection");
+  });
+
+  it("PII_ALLOW_INTROSPECTION=true opts out of the introspection gate", async () => {
+    const { executeReadOnlyQuery } = await reloadDbModule({
+      ENABLE_PII_REDACTION: "true",
+      PII_ALLOW_INTROSPECTION: "true",
+      // SHOW COLUMNS results contain a `Field` column whose values are
+      // column names; these names happen to include things like `email`,
+      // which the value-level redactor will then mask. That's fine — we
+      // only need to assert that the executor accepted the query and ran
+      // it (no longer treating it as a hard rejection).
+    });
+    const result = await executeReadOnlyQuery<any>(
+      `SHOW COLUMNS FROM ${DB_NAME}.pii_users`,
+    );
+    expect(result.isError).toBe(false);
+  });
+
+  it("does not block introspection when ENABLE_PII_REDACTION is unset", async () => {
+    const { executeReadOnlyQuery } = await reloadDbModule({
+      ENABLE_PII_REDACTION: undefined,
+      PII_ALLOW_INTROSPECTION: undefined,
+    });
+    const result = await executeReadOnlyQuery<any>(
+      `SHOW COLUMNS FROM ${DB_NAME}.pii_users`,
     );
     expect(result.isError).toBe(false);
   });

@@ -137,6 +137,25 @@ export const PII_EXTRA_COLUMN_PATTERNS: readonly RegExp[] = parseColumnPatterns(
 export const PII_ALLOW_SELECT_STAR =
   process.env.PII_ALLOW_SELECT_STAR === "true";
 
+// When PII redaction is enabled, any reference to a column whose name matches
+// a PII rule (built-in list, `PII_EXTRA_COLUMNS`, or `PII_EXTRA_COLUMN_PATTERNS`)
+// causes the query to be rejected — regardless of where in the query the
+// reference appears (projection, WHERE, JOIN ON, ORDER BY, subquery, ...).
+// This closes the alias-bypass where `CONCAT(first_name, ' ', last_name) AS NAME`
+// would render a redacted-column-aware result-key check useless.
+// Set `PII_ALLOW_REFERENCES=true` to opt out.
+export const PII_ALLOW_REFERENCES =
+  process.env.PII_ALLOW_REFERENCES === "true";
+
+// When PII redaction is enabled, queries that introspect schema metadata are
+// rejected so the LLM can't enumerate PII column names via SQL (`SHOW COLUMNS`,
+// `DESCRIBE`, `SELECT ... FROM information_schema.columns`, etc.). The MCP
+// resource endpoint (`mysql://tables/{name}`) already filters PII columns out;
+// this rule forces clients through that filtered path.
+// Set `PII_ALLOW_INTROSPECTION=true` to opt out.
+export const PII_ALLOW_INTROSPECTION =
+  process.env.PII_ALLOW_INTROSPECTION === "true";
+
 // Schema-specific permissions
 export const SCHEMA_INSERT_PERMISSIONS: SchemaPermissions =
   parseSchemaPermissions(process.env.SCHEMA_INSERT_PERMISSIONS);

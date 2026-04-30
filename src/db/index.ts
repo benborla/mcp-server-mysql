@@ -11,6 +11,8 @@ import {
   extractSchemaFromQuery,
   getQueryTypes,
   containsSelectStar,
+  findPIIColumnReferences,
+  isIntrospectionQuery,
 } from "./utils.js";
 
 import * as mysql2 from "mysql2/promise";
@@ -22,8 +24,10 @@ import {
   PII_EXTRA_COLUMNS,
   PII_EXTRA_COLUMN_PATTERNS,
   PII_ALLOW_SELECT_STAR,
+  PII_ALLOW_REFERENCES,
+  PII_ALLOW_INTROSPECTION,
 } from "./../config/index.js";
-import { redactPII } from "./../security/redact.js";
+import { redactPII, isPIIColumn, DEFAULT_PII_COLUMNS } from "./../security/redact.js";
 
 // Force read-only mode in multi-DB mode unless explicitly configured otherwise
 if (isMultiDbMode && process.env.MULTI_DB_WRITE_MODE !== "true") {
@@ -213,6 +217,66 @@ async function executeReadOnlyQuery<T>(sql: string): Promise<T> {
         ],
         isError: true,
       } as T;
+    }
+
+    // Introspection guard: refuse queries that enumerate schema metadata so
+    // the LLM can't bypass the (filtered) `mysql://tables/{name}` resource
+    // by running `SHOW COLUMNS`, `DESCRIBE`, or
+    // `SELECT ... FROM information_schema.columns` directly.
+    if (ENABLE_PII_REDACTION && !PII_ALLOW_INTROSPECTION) {
+      const intro = isIntrospectionQuery(sql);
+      if (intro.kind) {
+        log(
+          "error",
+          `Refusing introspection query (${intro.kind}) while PII redaction is enabled.`,
+        );
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                `Error: SQL introspection (${intro.kind}) is not permitted while PII redaction is enabled. ` +
+                `Use the mysql://tables and mysql://tables/{name} MCP resources to inspect schemas (PII columns are filtered there). ` +
+                `Set PII_ALLOW_INTROSPECTION=true to override this policy.`,
+            },
+          ],
+          isError: true,
+        } as T;
+      }
+    }
+
+    // PII column-reference guard: refuse queries that mention any redacted
+    // column anywhere in the AST (projection, WHERE, JOIN ON, ORDER BY,
+    // subqueries, ...). This closes alias-bypasses such as
+    // `CONCAT(first_name, ' ', last_name) AS NAME` where the result-key
+    // redactor never gets a chance because the output column is renamed.
+    if (ENABLE_PII_REDACTION && !PII_ALLOW_REFERENCES) {
+      const piiList = [...DEFAULT_PII_COLUMNS, ...PII_EXTRA_COLUMNS];
+      const hits = findPIIColumnReferences(sql, (col) =>
+        isPIIColumn(col, piiList, PII_EXTRA_COLUMN_PATTERNS),
+      );
+      if (hits.length > 0) {
+        const names = hits
+          .map((h) => (h.table ? `${h.table}.${h.column}` : h.column))
+          .join(", ");
+        log(
+          "error",
+          `Refusing query referencing redacted column(s): ${names}.`,
+        );
+        return {
+          content: [
+            {
+              type: "text",
+              text:
+                `Error: query references redacted column(s): ${names}. ` +
+                `These columns are protected by PII redaction policy and cannot be projected, ` +
+                `filtered, joined, or ordered on. Choose a different projection, ` +
+                `or set PII_ALLOW_REFERENCES=true to override this policy.`,
+            },
+          ],
+          isError: true,
+        } as T;
+      }
     }
 
     // Check the type of query

@@ -203,11 +203,16 @@ describe("PII Redaction – E2E via spawned MCP server", () => {
       // Explicit projection: SELECT * is rejected by the redaction-mode gate,
       // which has its own dedicated coverage below. This test focuses on
       // value-level masking with a normal, well-formed projection.
-      const body = await callMysqlQuery(
-        true,
+      //
+      // We also opt out of the column-reference gate (PII_ALLOW_REFERENCES=true)
+      // because this test exists specifically to verify value-level masking;
+      // the reference-gate has its own integration coverage in the integration
+      // suite and would otherwise reject the SELECT email, phone, ... line.
+      const body = await callMysqlQueryRaw(
+        { ...serverEnv(true), PII_ALLOW_REFERENCES: "true" },
         `SELECT id, email, phone, ssn, ip_address, credit_card, first_name, notes
            FROM ${DB_NAME}.pii_users`,
-      );
+      ).then((r) => r.content.map((c) => c.text).join("\n"));
 
       for (const needle of RAW_PII_SUBSTRINGS) {
         expect(

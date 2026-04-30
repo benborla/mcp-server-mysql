@@ -187,8 +187,13 @@ describe("PII Redaction – integration", () => {
       ENABLE_PII_REDACTION: "true",
     });
 
+    // Explicit projection: redaction is enabled, so SELECT * is gated. Listing
+    // the columns here exercises the same redaction code paths without
+    // tripping the SELECT * guard (which has its own dedicated tests below).
     const result = await executeReadOnlyQuery<any>(
-      `SELECT * FROM ${DB_NAME}.pii_users ORDER BY id`,
+      `SELECT id, email, phone, ssn, ip_address, credit_card, first_name,
+              notes, image_url, signed_download_url
+         FROM ${DB_NAME}.pii_users ORDER BY id`,
     );
 
     expect(result.isError).toBe(false);
@@ -221,7 +226,9 @@ describe("PII Redaction – integration", () => {
     );
 
     const result = await executeReadOnlyQuery<any>(
-      `SELECT * FROM ${DB_NAME}.pii_users`,
+      `SELECT id, email, phone, ssn, ip_address, credit_card, first_name,
+              notes, image_url, signed_download_url
+         FROM ${DB_NAME}.pii_users`,
     );
     const fullBody = result.content.map((c: any) => c.text).join("\n");
 
@@ -323,5 +330,80 @@ describe("PII Redaction – integration", () => {
     expect(row.email).toBe("j***@e***.com");
     // ...and the valid regex entry was still applied.
     expect(row.signed_download_url.startsWith("h")).toBe(true);
+  });
+
+  // ---- SELECT * gate -----------------------------------------------------
+  // When redaction is on, wildcard projections are refused so the LLM can't
+  // accidentally pull a redacted column it never saw in the schema response.
+
+  it("rejects bare SELECT * when ENABLE_PII_REDACTION=true", async () => {
+    const { executeReadOnlyQuery } = await reloadDbModule({
+      ENABLE_PII_REDACTION: "true",
+      PII_ALLOW_SELECT_STAR: undefined,
+    });
+    const result = await executeReadOnlyQuery<any>(
+      `SELECT * FROM ${DB_NAME}.pii_users`,
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("SELECT *");
+    expect(result.content[0].text).toContain("PII_ALLOW_SELECT_STAR");
+  });
+
+  it("rejects qualified t.* wildcard when ENABLE_PII_REDACTION=true", async () => {
+    const { executeReadOnlyQuery } = await reloadDbModule({
+      ENABLE_PII_REDACTION: "true",
+      PII_ALLOW_SELECT_STAR: undefined,
+    });
+    const result = await executeReadOnlyQuery<any>(
+      `SELECT u.* FROM ${DB_NAME}.pii_users u`,
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("PII_ALLOW_SELECT_STAR");
+  });
+
+  it("permits COUNT(*) under ENABLE_PII_REDACTION=true (aggregate, not wildcard)", async () => {
+    const { executeReadOnlyQuery } = await reloadDbModule({
+      ENABLE_PII_REDACTION: "true",
+      PII_ALLOW_SELECT_STAR: undefined,
+    });
+    const result = await executeReadOnlyQuery<any>(
+      `SELECT COUNT(*) AS n FROM ${DB_NAME}.pii_users`,
+    );
+    expect(result.isError).toBe(false);
+    const rows = JSON.parse(result.content[0].text);
+    expect(rows[0].n).toBe(SEED_ROWS.length);
+  });
+
+  it("PII_ALLOW_SELECT_STAR=true opts out of the SELECT * gate", async () => {
+    // Operator escape hatch — when a table is known to have no PII, the gate
+    // can be lifted globally. Value-level masking still runs (defence in
+    // depth), so the unmasked baseline (flag off) is verified by an earlier
+    // test in this file.
+    const { executeReadOnlyQuery } = await reloadDbModule({
+      ENABLE_PII_REDACTION: "true",
+      PII_ALLOW_SELECT_STAR: "true",
+    });
+    const result = await executeReadOnlyQuery<any>(
+      `SELECT * FROM ${DB_NAME}.pii_users ORDER BY id`,
+    );
+    expect(result.isError).toBe(false);
+    const rows = JSON.parse(result.content[0].text);
+    expect(rows).toHaveLength(SEED_ROWS.length);
+    // Value masking still applies — the override only lifts the projection
+    // policy, not the redactor itself.
+    expect(rows[0].email).toBe("j***@e***.com");
+  });
+
+  it("does not block SELECT * when ENABLE_PII_REDACTION is unset", async () => {
+    // Sanity: with redaction off, the gate must not engage. Otherwise we'd
+    // be regressing every consumer that hasn't opted in to redaction.
+    const { executeReadOnlyQuery } = await reloadDbModule({
+      ENABLE_PII_REDACTION: undefined,
+      PII_ALLOW_SELECT_STAR: undefined,
+    });
+    const result = await executeReadOnlyQuery<any>(
+      `SELECT * FROM ${DB_NAME}.pii_users ORDER BY id`,
+    );
+    expect(result.isError).toBe(false);
   });
 });

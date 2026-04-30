@@ -72,14 +72,20 @@ function serverEnv(enableRedaction: boolean): Record<string, string> {
   };
 }
 
-async function callMysqlQuery(
-  enableRedaction: boolean,
+interface MysqlQueryResult {
+  content: Array<{ type: string; text: string }>;
+  isError?: boolean;
+}
+
+/** Lower-level helper: returns the full structured tool result. */
+async function callMysqlQueryRaw(
+  env: Record<string, string>,
   sql: string,
-): Promise<string> {
+): Promise<MysqlQueryResult> {
   const transport = new StdioClientTransport({
     command: process.execPath, // current node binary
     args: [SERVER_ENTRY],
-    env: serverEnv(enableRedaction),
+    env,
     stderr: "ignore",
   });
 
@@ -90,15 +96,22 @@ async function callMysqlQuery(
 
   try {
     await client.connect(transport);
-    const result = (await client.callTool({
+    return (await client.callTool({
       name: "mysql_query",
       arguments: { sql },
-    })) as { content: Array<{ type: string; text: string }> };
-    return result.content.map((c) => c.text).join("\n");
+    })) as MysqlQueryResult;
   } finally {
     await client.close().catch(() => undefined);
     await transport.close().catch(() => undefined);
   }
+}
+
+async function callMysqlQuery(
+  enableRedaction: boolean,
+  sql: string,
+): Promise<string> {
+  const result = await callMysqlQueryRaw(serverEnv(enableRedaction), sql);
+  return result.content.map((c) => c.text).join("\n");
 }
 
 describe("PII Redaction – E2E via spawned MCP server", () => {
@@ -187,9 +200,13 @@ describe("PII Redaction – E2E via spawned MCP server", () => {
   it(
     "never returns raw PII when ENABLE_PII_REDACTION=true",
     async () => {
+      // Explicit projection: SELECT * is rejected by the redaction-mode gate,
+      // which has its own dedicated coverage below. This test focuses on
+      // value-level masking with a normal, well-formed projection.
       const body = await callMysqlQuery(
         true,
-        `SELECT * FROM ${DB_NAME}.pii_users`,
+        `SELECT id, email, phone, ssn, ip_address, credit_card, first_name, notes
+           FROM ${DB_NAME}.pii_users`,
       );
 
       for (const needle of RAW_PII_SUBSTRINGS) {
@@ -205,6 +222,52 @@ describe("PII Redaction – E2E via spawned MCP server", () => {
       expect(body).toContain("***-**-6789");
       expect(body).toContain("***.***.***.42");
       expect(body).toContain("****-****-****-1111");
+    },
+    30_000,
+  );
+
+  it(
+    "rejects SELECT * via the mysql_query tool when ENABLE_PII_REDACTION=true",
+    async () => {
+      // Full pipeline check: the gate must fire inside the spawned binary,
+      // not just the in-process integration tests. We assert both the error
+      // flag and the explanatory text so the LLM gets actionable feedback.
+      const result = await callMysqlQueryRaw(
+        serverEnv(true),
+        `SELECT * FROM ${DB_NAME}.pii_users`,
+      );
+      expect(result.isError).toBe(true);
+      const text = result.content.map((c) => c.text).join("\n");
+      expect(text).toContain("SELECT *");
+      expect(text).toContain("PII_ALLOW_SELECT_STAR");
+      // Critically, no row data was returned despite the table being seeded.
+      for (const needle of RAW_PII_SUBSTRINGS) {
+        expect(text.includes(needle)).toBe(false);
+      }
+    },
+    30_000,
+  );
+
+  it(
+    "PII_ALLOW_SELECT_STAR=true allows SELECT * through the mysql_query tool",
+    async () => {
+      // Operator opt-out: the gate is lifted but value-level redaction still
+      // runs (defence in depth). Same assertions as the masking test, just
+      // arrived at via SELECT * instead of an explicit column list.
+      const env = {
+        ...serverEnv(true),
+        PII_ALLOW_SELECT_STAR: "true",
+      };
+      const result = await callMysqlQueryRaw(
+        env,
+        `SELECT * FROM ${DB_NAME}.pii_users`,
+      );
+      expect(result.isError).toBe(false);
+      const body = result.content.map((c) => c.text).join("\n");
+      for (const needle of RAW_PII_SUBSTRINGS) {
+        expect(body.includes(needle)).toBe(false);
+      }
+      expect(body).toContain("j***@e***.com");
     },
     30_000,
   );

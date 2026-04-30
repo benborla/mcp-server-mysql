@@ -7,7 +7,11 @@ import {
   isUpdateAllowedForSchema,
   isDeleteAllowedForSchema,
 } from "./permissions.js";
-import { extractSchemaFromQuery, getQueryTypes } from "./utils.js";
+import {
+  extractSchemaFromQuery,
+  getQueryTypes,
+  containsSelectStar,
+} from "./utils.js";
 
 import * as mysql2 from "mysql2/promise";
 import { log } from "./../utils/index.js";
@@ -17,6 +21,7 @@ import {
   ENABLE_PII_REDACTION,
   PII_EXTRA_COLUMNS,
   PII_EXTRA_COLUMN_PATTERNS,
+  PII_ALLOW_SELECT_STAR,
 } from "./../config/index.js";
 import { redactPII } from "./../security/redact.js";
 
@@ -183,6 +188,33 @@ async function executeWriteQuery<T>(sql: string): Promise<T> {
 async function executeReadOnlyQuery<T>(sql: string): Promise<T> {
   let connection;
   try {
+    // PII redaction works hand-in-hand with explicit column projection: the
+    // schema endpoint hides redacted columns, so the LLM should never need
+    // SELECT *. Refusing wildcard projections here prevents the LLM from
+    // accidentally pulling redacted columns it never saw in the schema.
+    if (
+      ENABLE_PII_REDACTION &&
+      !PII_ALLOW_SELECT_STAR &&
+      containsSelectStar(sql)
+    ) {
+      log(
+        "error",
+        "Refusing query with SELECT * while PII redaction is enabled; project explicit columns instead.",
+      );
+      return {
+        content: [
+          {
+            type: "text",
+            text:
+              "Error: SELECT * (and `table.*`) is not permitted while PII redaction is enabled. " +
+              "Project an explicit column list (e.g. SELECT col1, col2 FROM ...) so redacted columns are not accidentally returned. " +
+              "Set PII_ALLOW_SELECT_STAR=true to override this policy.",
+          },
+        ],
+        isError: true,
+      } as T;
+    }
+
     // Check the type of query
     const queryTypes = await getQueryTypes(sql);
 

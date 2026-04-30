@@ -49,4 +49,44 @@ async function getQueryTypes(query: string): Promise<string[]> {
   }
 }
 
-export { extractSchemaFromQuery, getQueryTypes };
+/**
+ * Detect column wildcards (`SELECT *` or `SELECT t.*`) anywhere in the query,
+ * including inside subqueries. Aggregate forms like `COUNT(*)` are *not*
+ * flagged because the parser represents those as a `star`-typed expression
+ * argument rather than a `column_ref` with column `"*"`.
+ *
+ * Returns false (i.e. allows the query through) if the SQL fails to parse —
+ * downstream `executeQuery` will surface the parse error in its normal error
+ * path. We don't want a parser hiccup to block otherwise valid queries here.
+ */
+function containsSelectStar(sql: string): boolean {
+  let astOrArray: AST | AST[];
+  try {
+    astOrArray = parser.astify(sql, { database: "mysql" });
+  } catch {
+    return false;
+  }
+  const statements = Array.isArray(astOrArray) ? astOrArray : [astOrArray];
+  return statements.some((stmt) => nodeHasColumnStar(stmt));
+}
+
+function nodeHasColumnStar(node: unknown): boolean {
+  if (node == null || typeof node !== "object") return false;
+  if (node instanceof Date) return false;
+
+  const obj = node as Record<string, unknown>;
+
+  // A bare/qualified column wildcard projection.
+  if (obj.type === "column_ref" && obj.column === "*") return true;
+
+  for (const value of Object.values(obj)) {
+    if (Array.isArray(value)) {
+      if (value.some((item) => nodeHasColumnStar(item))) return true;
+    } else if (value && typeof value === "object") {
+      if (nodeHasColumnStar(value)) return true;
+    }
+  }
+  return false;
+}
+
+export { extractSchemaFromQuery, getQueryTypes, containsSelectStar };

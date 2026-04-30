@@ -129,6 +129,14 @@ export const PII_EXTRA_COLUMN_PATTERNS: readonly RegExp[] = parseColumnPatterns(
   process.env.PII_EXTRA_COLUMN_PATTERNS,
 );
 
+// When PII redaction is enabled, queries with `SELECT *` (or `t.*`) are
+// rejected by default to force the LLM to project explicit column lists.
+// Combined with PII column filtering in the schema response, this prevents
+// the LLM from accidentally pulling redacted columns it never saw.
+// Set `PII_ALLOW_SELECT_STAR=true` to opt out (e.g. for tables with no PII).
+export const PII_ALLOW_SELECT_STAR =
+  process.env.PII_ALLOW_SELECT_STAR === "true";
+
 // Schema-specific permissions
 export const SCHEMA_INSERT_PERMISSIONS: SchemaPermissions =
   parseSchemaPermissions(process.env.SCHEMA_INSERT_PERMISSIONS);

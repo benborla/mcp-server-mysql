@@ -53,15 +53,56 @@ describe("isIntrospectionQuery", () => {
       );
     });
 
-    it("flags SHOW TABLES", () => {
-      // Table enumeration is not column-level PII leakage but it still leaks
-      // schema topology; treat it as introspection so the LLM uses the
-      // filtered MCP resource path.
-      expect(isIntrospectionQuery("SHOW TABLES").kind).toBe("show_other");
+    it("classifies SHOW TABLES as show_passthrough (no column-level PII)", () => {
+      // Table enumeration exposes schema topology only — no column data — so
+      // it's safe to let through under PII redaction. The hard-block escape
+      // valve (PII_BLOCK_INTROSPECTION) still rejects it.
+      expect(isIntrospectionQuery("SHOW TABLES").kind).toBe("show_passthrough");
     });
 
-    it("flags SHOW TABLE STATUS", () => {
-      expect(isIntrospectionQuery("SHOW TABLE STATUS").kind).toBe("show_other");
+    it("classifies SHOW TABLE STATUS as show_passthrough", () => {
+      expect(isIntrospectionQuery("SHOW TABLE STATUS").kind).toBe(
+        "show_passthrough",
+      );
+    });
+
+    it("classifies SHOW DATABASES as show_passthrough", () => {
+      expect(isIntrospectionQuery("SHOW DATABASES").kind).toBe(
+        "show_passthrough",
+      );
+    });
+
+    it("classifies SHOW SCHEMAS as show_passthrough (alias for SHOW DATABASES)", () => {
+      // node-sql-parser fails to parse `SHOW SCHEMAS`; the textual pre-screen
+      // is what classifies it.
+      expect(isIntrospectionQuery("SHOW SCHEMAS").kind).toBe(
+        "show_passthrough",
+      );
+    });
+
+    it("classifies SHOW CHARACTER SET as show_passthrough", () => {
+      expect(isIntrospectionQuery("SHOW CHARACTER SET").kind).toBe(
+        "show_passthrough",
+      );
+    });
+
+    it("classifies SHOW CHARSET as show_passthrough (alias for SHOW CHARACTER SET)", () => {
+      // node-sql-parser fails on `SHOW CHARSET`; pre-screen handles it.
+      expect(isIntrospectionQuery("SHOW CHARSET").kind).toBe(
+        "show_passthrough",
+      );
+    });
+
+    it("classifies SHOW COLLATION as show_passthrough", () => {
+      expect(isIntrospectionQuery("SHOW COLLATION").kind).toBe(
+        "show_passthrough",
+      );
+    });
+
+    it("does NOT classify SHOW PROCESSLIST as passthrough (falls to show_other → blocked)", () => {
+      // Unknown SHOW shapes must default to the rejected bucket so we don't
+      // accidentally surface server-internal data the LLM shouldn't see.
+      expect(isIntrospectionQuery("SHOW PROCESSLIST").kind).toBe("show_other");
     });
 
     it("is case-insensitive", () => {

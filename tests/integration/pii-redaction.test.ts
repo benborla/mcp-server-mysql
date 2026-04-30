@@ -634,6 +634,42 @@ describe("PII Redaction – integration", () => {
     expect(cols).toContain("image_url");
   });
 
+  it("SHOW TABLES executes under ENABLE_PII_REDACTION=true (passthrough; no row filter)", async () => {
+    // Table enumeration exposes schema topology only; no column-level PII
+    // can leak. The `show_passthrough` policy lets it through unchanged.
+    const { executeReadOnlyQuery } = await reloadDbModule({
+      ENABLE_PII_REDACTION: "true",
+      PII_ALLOW_INTROSPECTION: undefined,
+      PII_BLOCK_INTROSPECTION: undefined,
+    });
+    const result = await executeReadOnlyQuery<any>(
+      `SHOW TABLES FROM ${DB_NAME}`,
+    );
+    expect(result.isError).toBe(false);
+    const rows = JSON.parse(result.content[0].text) as Array<
+      Record<string, string>
+    >;
+    // SHOW TABLES rows have a single dynamic key like `Tables_in_<db>`. We
+    // pull whatever the first column's value is on every row.
+    const tableNames = rows.map((r) => Object.values(r)[0]);
+    expect(tableNames).toContain("pii_users");
+  });
+
+  it("PII_BLOCK_INTROSPECTION=true blocks SHOW TABLES (strict-mode escape valve)", async () => {
+    // Symmetric with the SHOW COLUMNS block test: passthrough kinds also get
+    // rejected when an operator opts into the blanket-block policy.
+    const { executeReadOnlyQuery } = await reloadDbModule({
+      ENABLE_PII_REDACTION: "true",
+      PII_ALLOW_INTROSPECTION: undefined,
+      PII_BLOCK_INTROSPECTION: "true",
+    });
+    const result = await executeReadOnlyQuery<any>(
+      `SHOW TABLES FROM ${DB_NAME}`,
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("introspection");
+  });
+
   it("rejects SHOW CREATE TABLE (statement-shaped, not filterable)", async () => {
     // SHOW CREATE TABLE returns the full DDL as a string — no row shape to
     // filter. We block it rather than try to regex-strip PII column lines.

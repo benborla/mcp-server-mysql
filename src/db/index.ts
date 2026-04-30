@@ -226,12 +226,20 @@ async function executeReadOnlyQuery<T>(sql: string): Promise<T> {
       } as T;
     }
 
-    // Introspection guard: filter PII columns out of row-shaped introspection
-    // results (SHOW COLUMNS / DESCRIBE / SHOW INDEX), and reject the rest
-    // (SHOW CREATE TABLE, information_schema.*, mysql.*) which can't be
-    // filtered safely. PII_ALLOW_INTROSPECTION=true bypasses both branches.
-    // PII_BLOCK_INTROSPECTION=true restores the old hard-block behaviour.
+    // Introspection guard. Three sub-policies under ENABLE_PII_REDACTION:
+    //   - filterable (SHOW COLUMNS / DESCRIBE / SHOW INDEX): execute, then
+    //     drop PII rows from the result.
+    //   - passthrough (SHOW TABLES / SHOW DATABASES / charset / collation /
+    //     etc.): execute unchanged. These expose only schema topology (table
+    //     and database names), no column-level PII.
+    //   - rejected (SHOW CREATE TABLE, information_schema.*, mysql.*, plus
+    //     any unrecognised SHOW): blocked, because we can't safely filter
+    //     them and they can leak column names verbatim.
+    // PII_ALLOW_INTROSPECTION=true bypasses the guard entirely.
+    // PII_BLOCK_INTROSPECTION=true restores the old hard-block behaviour for
+    // every introspection kind, including filterable and passthrough.
     let introspectionFilterKind: FilterableIntrospectionKind | null = null;
+    let isIntrospectionPassThrough = false;
     if (ENABLE_PII_REDACTION && !PII_ALLOW_INTROSPECTION) {
       const intro = isIntrospectionQuery(sql);
       if (intro.kind) {
@@ -241,8 +249,9 @@ async function executeReadOnlyQuery<T>(sql: string): Promise<T> {
           intro.kind === "show_index"
             ? intro.kind
             : null;
+        const passthrough = intro.kind === "show_passthrough";
 
-        if (PII_BLOCK_INTROSPECTION || !filterable) {
+        if (PII_BLOCK_INTROSPECTION || (!filterable && !passthrough)) {
           log(
             "error",
             `Refusing introspection query (${intro.kind}) while PII redaction is enabled.`,
@@ -261,9 +270,16 @@ async function executeReadOnlyQuery<T>(sql: string): Promise<T> {
             isError: true,
           } as T;
         }
-        // Filterable kind: allow the query through; we'll filter PII rows
-        // from the result before returning it.
-        introspectionFilterKind = filterable;
+        if (filterable) {
+          // Filterable kind: allow through; we'll drop PII rows from the
+          // result before returning it.
+          introspectionFilterKind = filterable;
+        } else if (passthrough) {
+          // Passthrough kind: nothing to set up — just skip the queryTypes /
+          // permissions block below (the parser doesn't model these
+          // statements) and let the executor run the SQL as-is.
+          isIntrospectionPassThrough = true;
+        }
       }
     }
 
@@ -301,9 +317,10 @@ async function executeReadOnlyQuery<T>(sql: string): Promise<T> {
       }
     }
 
-    // Filterable introspection statements (SHOW COLUMNS / DESCRIBE / SHOW INDEX)
-    // are inherently read-only and `node-sql-parser` doesn't model them, so
-    // we skip the queryType + permission + write-routing block entirely and
+    // Introspection statements (filterable + passthrough) are inherently
+    // read-only and `node-sql-parser` doesn't model most of them (SHOW TABLE
+    // STATUS, SHOW SCHEMAS, SHOW CHARSET fail to parse outright). Skip the
+    // queryType + permission + write-routing block entirely for these and
     // execute them directly below.
     let queryTypes: string[] = [];
     let schema: string | null = null;
@@ -312,7 +329,7 @@ async function executeReadOnlyQuery<T>(sql: string): Promise<T> {
     let isDeleteOperation = false;
     let isDDLOperation = false;
 
-    if (!introspectionFilterKind) {
+    if (!introspectionFilterKind && !isIntrospectionPassThrough) {
       queryTypes = await getQueryTypes(sql);
       schema = extractSchemaFromQuery(sql);
       isUpdateOperation = queryTypes.some((type) => ["update"].includes(type));

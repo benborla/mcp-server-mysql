@@ -172,6 +172,10 @@ export type IntrospectionKind =
   | "show_columns"
   | "show_create"
   | "show_index"
+  // Table-/database-level metadata listings that expose only schema topology
+  // (table names, database names, charset/collation lists). They have no
+  // column-level information, so the executor lets them run unchanged.
+  | "show_passthrough"
   | "show_other"
   | "describe"
   | "information_schema"
@@ -185,7 +189,7 @@ export interface IntrospectionResult {
 // `SHOW FULL COLUMNS FROM users`, `SHOW FIELDS FROM users`). We pre-screen
 // for these via a textual check before falling through to the AST walk.
 const SHOW_INTROSPECTION_RE =
-  /^\s*SHOW\s+(?:FULL\s+)?(COLUMNS|FIELDS|CREATE\s+TABLE|CREATE\s+VIEW|INDEX(?:ES)?|KEYS|TABLE\s+STATUS|TABLES)\b/i;
+  /^\s*SHOW\s+(?:FULL\s+)?(COLUMNS|FIELDS|CREATE\s+TABLE|CREATE\s+VIEW|INDEX(?:ES)?|KEYS|TABLE\s+STATUS|TABLES|DATABASES|SCHEMAS|CHARACTER\s+SET|CHARSET|COLLATION)\b/i;
 const DESCRIBE_RE = /^\s*(?:DESCRIBE|DESC)\s+/i;
 // `EXPLAIN <table>` is a synonym for `DESCRIBE <table>` and produces the same
 // SHOW COLUMNS-shaped result. We classify it as introspection so the row
@@ -223,6 +227,18 @@ function isIntrospectionQuery(sql: string): IntrospectionResult {
     ) {
       return { kind: "show_index" };
     }
+    // Table-/database-level listings: schema topology only, no column data.
+    if (
+      keyword === "TABLES" ||
+      keyword.startsWith("TABLE STATUS") ||
+      keyword === "DATABASES" ||
+      keyword === "SCHEMAS" ||
+      keyword.startsWith("CHARACTER") ||
+      keyword === "CHARSET" ||
+      keyword === "COLLATION"
+    ) {
+      return { kind: "show_passthrough" };
+    }
     return { kind: "show_other" };
   }
   if (DESCRIBE_RE.test(sql) || EXPLAIN_TABLE_RE.test(sql)) {
@@ -255,6 +271,19 @@ function findIntrospectionKind(node: unknown): IntrospectionKind | null {
     if (keyword === "columns" || keyword === "fields") return "show_columns";
     if (keyword === "create") return "show_create";
     if (keyword === "index" || keyword === "keys") return "show_index";
+    // Table-/database-level listings: schema topology only, no column data.
+    // Empirically the parser produces `keyword: "tables" / "databases" /
+    // "character" / "collation"` for the parse-able cases. SHOW TABLE STATUS,
+    // SHOW SCHEMAS, and SHOW CHARSET fail to parse entirely — those are
+    // covered by the textual pre-screen at the top of `isIntrospectionQuery`.
+    if (
+      keyword === "tables" ||
+      keyword === "databases" ||
+      keyword === "character" ||
+      keyword === "collation"
+    ) {
+      return "show_passthrough";
+    }
     return "show_other";
   }
   if (obj.type === "desc" || obj.type === "describe") {

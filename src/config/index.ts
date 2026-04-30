@@ -147,14 +147,26 @@ export const PII_ALLOW_SELECT_STAR =
 export const PII_ALLOW_REFERENCES =
   process.env.PII_ALLOW_REFERENCES === "true";
 
-// When PII redaction is enabled, queries that introspect schema metadata are
-// rejected so the LLM can't enumerate PII column names via SQL (`SHOW COLUMNS`,
-// `DESCRIBE`, `SELECT ... FROM information_schema.columns`, etc.). The MCP
-// resource endpoint (`mysql://tables/{name}`) already filters PII columns out;
-// this rule forces clients through that filtered path.
-// Set `PII_ALLOW_INTROSPECTION=true` to opt out.
+// When PII redaction is enabled, queries that introspect schema metadata get
+// special handling so the LLM can discover non-PII columns without ever seeing
+// the PII ones:
+//   - `SHOW COLUMNS`, `SHOW FULL COLUMNS`, `DESCRIBE`, `DESC`, `EXPLAIN <table>`,
+//     `SHOW INDEX(ES)`, `SHOW KEYS` execute, and rows whose column-name field
+//     matches a PII rule are filtered out of the response.
+//   - `SHOW CREATE TABLE`, `SHOW CREATE VIEW`, `SHOW TABLES`, `SHOW TABLE STATUS`,
+//     and any SELECT against `information_schema` / `mysql` schema are rejected
+//     because they cannot be filtered safely without a custom parser.
+// Set `PII_ALLOW_INTROSPECTION=true` to bypass both behaviours and return raw
+// results unchanged.
 export const PII_ALLOW_INTROSPECTION =
   process.env.PII_ALLOW_INTROSPECTION === "true";
+
+// Optional stricter mode: restores the original "hard block" behaviour for
+// every introspection statement (filterable kinds included). Useful when the
+// row-filter default is too permissive for an environment.
+// Ignored when `PII_ALLOW_INTROSPECTION=true` (which always wins).
+export const PII_BLOCK_INTROSPECTION =
+  process.env.PII_BLOCK_INTROSPECTION === "true";
 
 // Schema-specific permissions
 export const SCHEMA_INSERT_PERMISSIONS: SchemaPermissions =

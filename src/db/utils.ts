@@ -186,7 +186,16 @@ export interface IntrospectionResult {
 // for these via a textual check before falling through to the AST walk.
 const SHOW_INTROSPECTION_RE =
   /^\s*SHOW\s+(?:FULL\s+)?(COLUMNS|FIELDS|CREATE\s+TABLE|CREATE\s+VIEW|INDEX(?:ES)?|KEYS|TABLE\s+STATUS|TABLES)\b/i;
-const DESCRIBE_RE = /^\s*(?:DESCRIBE|DESC|EXPLAIN)\s+/i;
+const DESCRIBE_RE = /^\s*(?:DESCRIBE|DESC)\s+/i;
+// `EXPLAIN <table>` is a synonym for `DESCRIBE <table>` and produces the same
+// SHOW COLUMNS-shaped result. We classify it as introspection so the row
+// filter applies. We must NOT match `EXPLAIN <select-stmt>` etc., because
+// those are query-plan inspections — their result rows have a totally
+// different shape, and the SQL itself can reference PII columns that the
+// column-reference guard needs to see. The negative look-ahead lists the
+// query-statement keywords MySQL accepts after EXPLAIN.
+const EXPLAIN_TABLE_RE =
+  /^\s*EXPLAIN\s+(?!SELECT\b|INSERT\b|UPDATE\b|DELETE\b|REPLACE\b|ANALYZE\b|FORMAT\b|FOR\s|EXTENDED\b|PARTITIONS\b|\()[A-Za-z_`]/i;
 
 /**
  * Identify queries that expose schema/column metadata. Combines a textual
@@ -216,7 +225,7 @@ function isIntrospectionQuery(sql: string): IntrospectionResult {
     }
     return { kind: "show_other" };
   }
-  if (DESCRIBE_RE.test(sql)) {
+  if (DESCRIBE_RE.test(sql) || EXPLAIN_TABLE_RE.test(sql)) {
     return { kind: "describe" };
   }
 

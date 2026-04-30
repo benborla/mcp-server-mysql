@@ -220,6 +220,100 @@ export function redactPII<T>(value: T, options: RedactOptions = {}): T {
   return result;
 }
 
+/**
+ * The subset of introspection statements whose results are row-shaped and can
+ * therefore be filtered row-by-row to drop PII columns. Statement-shaped
+ * outputs (SHOW CREATE TABLE) and arbitrary `information_schema` SELECTs are
+ * intentionally not in this list — those stay blocked because the row shape
+ * is too variable to filter safely.
+ */
+export type FilterableIntrospectionKind =
+  | "show_columns"
+  | "describe"
+  | "show_index";
+
+const SHOW_COLUMNS_KEY = "field";
+const SHOW_INDEX_KEY = "column_name";
+
+/**
+ * Given a row from a `SHOW COLUMNS` / `SHOW FULL COLUMNS` / `DESCRIBE` result,
+ * find the key whose lowercased name is `Field` (case-insensitive). MySQL
+ * returns `Field` capitalised, but we lower for portability.
+ */
+function findKey(row: Record<string, unknown>, target: string): string | null {
+  for (const key of Object.keys(row)) {
+    if (key.toLowerCase() === target) return key;
+  }
+  return null;
+}
+
+/**
+ * Filter a row-shaped introspection result by dropping rows whose
+ * column-name field (`Field` for SHOW COLUMNS / DESCRIBE, `Column_name` for
+ * SHOW INDEX) matches the PII policy. Returns the filtered array, or `null`
+ * to signal "row shape unrecognized" so the caller can fail closed and
+ * reject the query rather than leak unfiltered metadata.
+ *
+ * Empty result sets pass through as `[]` (not `null`): a table that
+ * legitimately has no columns/indexes is not a shape failure.
+ *
+ * The caller is expected to have already established that `kind` is a
+ * filterable introspection kind. Callers should also still log/observe the
+ * hide count via the returned array length vs. input length.
+ */
+export function filterIntrospectionRows<T>(
+  rows: T,
+  kind: FilterableIntrospectionKind,
+  isPII: (column: string) => boolean,
+): T | null {
+  if (!Array.isArray(rows)) return null;
+
+  if (rows.length === 0) return rows;
+
+  const keyName =
+    kind === "show_index" ? SHOW_INDEX_KEY : SHOW_COLUMNS_KEY;
+
+  // Inspect the first row to confirm the shape. If the expected key is
+  // missing, the result almost certainly came from an EXPLAIN <SELECT> or
+  // some other non-table-shaped introspection that slipped past the
+  // classifier — fail closed.
+  const sample = rows[0];
+  if (sample == null || typeof sample !== "object" || Array.isArray(sample)) {
+    return null;
+  }
+  const sampleKey = findKey(sample as Record<string, unknown>, keyName);
+  if (sampleKey === null) return null;
+
+  let hidden = 0;
+  const out = (rows as unknown[]).filter((row) => {
+    if (row == null || typeof row !== "object" || Array.isArray(row)) {
+      // Defensive: heterogeneous row shape — keep the row only if it
+      // doesn't have a recognisable PII-named key. Caller already saw
+      // the head row was well-formed, so this branch is unlikely.
+      return true;
+    }
+    const obj = row as Record<string, unknown>;
+    const colKey = findKey(obj, keyName);
+    if (colKey === null) return true;
+    const value = obj[colKey];
+    if (typeof value !== "string") return true;
+    if (isPII(value)) {
+      hidden++;
+      return false;
+    }
+    return true;
+  });
+
+  if (hidden > 0) {
+    log(
+      "info",
+      `[redact] filtered ${hidden} PII column(s) from ${kind} result`,
+    );
+  }
+
+  return out as T;
+}
+
 function walk(
   value: unknown,
   columns: readonly string[],

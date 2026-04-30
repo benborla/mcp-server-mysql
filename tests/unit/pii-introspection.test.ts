@@ -86,6 +86,43 @@ describe("isIntrospectionQuery", () => {
       // by EXPLAINing a table directly.
       expect(isIntrospectionQuery("EXPLAIN users").kind).toBe("describe");
     });
+
+    it("flags EXPLAIN db.users (qualified)", () => {
+      expect(isIntrospectionQuery("EXPLAIN mydb.users").kind).toBe("describe");
+    });
+
+    it("does NOT flag EXPLAIN <SELECT> as describe (it's a query plan, not column metadata)", () => {
+      // Critical: this case must fall through to the column-reference guard
+      // so PII columns referenced inside the SELECT are still rejected.
+      // Otherwise the introspection filter would receive a query-plan-shaped
+      // result and the row-shape mismatch would mask whatever protection we
+      // think we have.
+      expect(isIntrospectionQuery("EXPLAIN SELECT email FROM users").kind).toBeNull();
+    });
+
+    it("does NOT flag EXPLAIN INSERT/UPDATE/DELETE", () => {
+      expect(
+        isIntrospectionQuery("EXPLAIN INSERT INTO users (email) VALUES ('x@y.z')").kind,
+      ).toBeNull();
+      expect(
+        isIntrospectionQuery("EXPLAIN UPDATE users SET email = 'x' WHERE id = 1").kind,
+      ).toBeNull();
+      expect(
+        isIntrospectionQuery("EXPLAIN DELETE FROM users WHERE id = 1").kind,
+      ).toBeNull();
+    });
+
+    it("does NOT flag EXPLAIN ANALYZE / EXPLAIN FORMAT=JSON / EXPLAIN FOR CONNECTION", () => {
+      expect(
+        isIntrospectionQuery("EXPLAIN ANALYZE SELECT id FROM users").kind,
+      ).toBeNull();
+      expect(
+        isIntrospectionQuery("EXPLAIN FORMAT=JSON SELECT id FROM users").kind,
+      ).toBeNull();
+      expect(
+        isIntrospectionQuery("EXPLAIN FOR CONNECTION 42").kind,
+      ).toBeNull();
+    });
   });
 
   describe("flags information_schema and mysql metadata access", () => {

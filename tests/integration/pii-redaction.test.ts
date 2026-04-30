@@ -106,6 +106,9 @@ describe("PII Redaction – integration", () => {
       await conn.query(`CREATE DATABASE IF NOT EXISTS ${DB_NAME}`);
       await conn.query(`USE ${DB_NAME}`);
       await conn.query(`DROP TABLE IF EXISTS pii_users`);
+      // The two indexes (one PII, one non-PII) exist so the SHOW INDEX
+      // test below can prove that PII-indexed rows are filtered while
+      // non-PII rows are kept.
       await conn.query(`
         CREATE TABLE pii_users (
           id INT AUTO_INCREMENT PRIMARY KEY,
@@ -117,7 +120,9 @@ describe("PII Redaction – integration", () => {
           first_name VARCHAR(128),
           notes TEXT,
           image_url VARCHAR(255),
-          signed_download_url VARCHAR(255)
+          signed_download_url VARCHAR(255),
+          KEY idx_email (email),
+          KEY idx_image_url (image_url)
         )
       `);
     } finally {
@@ -504,54 +509,152 @@ describe("PII Redaction – integration", () => {
   });
 
   // ---- Introspection gate -----------------------------------------------
-  // When redaction is on, schema-introspection statements are rejected so
-  // the LLM can't enumerate PII column names by running SQL directly
-  // (it should use the filtered mysql://tables/{name} resource instead).
+  // When redaction is on, row-shaped introspection statements (SHOW COLUMNS,
+  // DESCRIBE, SHOW INDEX) execute and have PII rows filtered from the
+  // response. Statement-shaped or arbitrary information_schema queries are
+  // still rejected because they can't be filtered safely.
 
-  it("rejects SHOW COLUMNS FROM <table>", async () => {
+  // Built-in PII columns in the pii_users table. Asserted-against in each
+  // filter test to keep the expectations honest as new columns are added.
+  const PII_COLUMNS = [
+    "email",
+    "phone",
+    "ssn",
+    "ip_address",
+    "credit_card",
+    "first_name",
+  ];
+  const NON_PII_COLUMNS = ["id", "notes", "image_url", "signed_download_url"];
+
+  it("filters PII rows from SHOW COLUMNS FROM <table>", async () => {
+    // Replaces the old "rejects SHOW COLUMNS" test. The new default lets the
+    // statement execute and drops PII column rows from the result so the LLM
+    // can discover safe columns without ever seeing PII names.
+    //
+    // We explicitly clear PII_EXTRA_COLUMNS / PII_EXTRA_COLUMN_PATTERNS
+    // because earlier tests in this file set them and `process.env` is
+    // shared across tests. Without the reset, a leftover pattern like
+    // `^signed_.*` would flag `signed_download_url` as PII and the
+    // assertion below would fail for the wrong reason.
     const { executeReadOnlyQuery } = await reloadDbModule({
       ENABLE_PII_REDACTION: "true",
       PII_ALLOW_INTROSPECTION: undefined,
+      PII_BLOCK_INTROSPECTION: undefined,
+      PII_EXTRA_COLUMNS: undefined,
+      PII_EXTRA_COLUMN_PATTERNS: undefined,
     });
     const result = await executeReadOnlyQuery<any>(
       `SHOW COLUMNS FROM ${DB_NAME}.pii_users`,
     );
-    expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("introspection");
-    expect(result.content[0].text).toContain("mysql://tables");
-    expect(result.content[0].text).toContain("PII_ALLOW_INTROSPECTION");
+    expect(result.isError).toBe(false);
+    const rows = JSON.parse(result.content[0].text) as Array<{ Field: string }>;
+    const fields = rows.map((r) => r.Field);
+    for (const col of PII_COLUMNS) {
+      expect(fields, `PII column "${col}" leaked through SHOW COLUMNS`).not.toContain(col);
+    }
+    for (const col of NON_PII_COLUMNS) {
+      expect(fields, `Non-PII column "${col}" was wrongly filtered`).toContain(col);
+    }
   });
 
-  it("rejects SHOW FULL COLUMNS (which the SQL parser can't parse)", async () => {
-    // node-sql-parser refuses `SHOW FULL COLUMNS`; the textual pre-screen
-    // is what catches it. This test pins that behaviour.
+  it("filters PII rows from SHOW FULL COLUMNS (parser doesn't accept it; pre-screen + filter handles it)", async () => {
     const { executeReadOnlyQuery } = await reloadDbModule({
       ENABLE_PII_REDACTION: "true",
       PII_ALLOW_INTROSPECTION: undefined,
+      PII_BLOCK_INTROSPECTION: undefined,
     });
     const result = await executeReadOnlyQuery<any>(
       `SHOW FULL COLUMNS FROM ${DB_NAME}.pii_users`,
     );
-    expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("introspection");
+    expect(result.isError).toBe(false);
+    const rows = JSON.parse(result.content[0].text) as Array<{
+      Field: string;
+      Privileges: string;
+    }>;
+    const fields = rows.map((r) => r.Field);
+    expect(fields).not.toContain("email");
+    expect(fields).toContain("id");
+    // SHOW FULL COLUMNS adds a Privileges column; verify the extra fields
+    // pass through (only PII rows are dropped, not extra columns).
+    expect(rows[0].Privileges).toBeDefined();
   });
 
-  it("rejects DESCRIBE <table>", async () => {
+  it("filters PII rows from DESCRIBE <table>", async () => {
     const { executeReadOnlyQuery } = await reloadDbModule({
       ENABLE_PII_REDACTION: "true",
       PII_ALLOW_INTROSPECTION: undefined,
+      PII_BLOCK_INTROSPECTION: undefined,
     });
     const result = await executeReadOnlyQuery<any>(
       `DESCRIBE ${DB_NAME}.pii_users`,
     );
-    expect(result.isError).toBe(true);
-    expect(result.content[0].text).toContain("introspection");
+    expect(result.isError).toBe(false);
+    const fields = (JSON.parse(result.content[0].text) as Array<{ Field: string }>).map(
+      (r) => r.Field,
+    );
+    expect(fields).not.toContain("first_name");
+    expect(fields).toContain("id");
   });
 
-  it("rejects SELECT FROM information_schema.columns", async () => {
+  it("filters PII rows from EXPLAIN <table> (synonym for DESCRIBE)", async () => {
     const { executeReadOnlyQuery } = await reloadDbModule({
       ENABLE_PII_REDACTION: "true",
       PII_ALLOW_INTROSPECTION: undefined,
+      PII_BLOCK_INTROSPECTION: undefined,
+    });
+    const result = await executeReadOnlyQuery<any>(
+      `EXPLAIN ${DB_NAME}.pii_users`,
+    );
+    expect(result.isError).toBe(false);
+    const fields = (JSON.parse(result.content[0].text) as Array<{ Field: string }>).map(
+      (r) => r.Field,
+    );
+    expect(fields).not.toContain("email");
+    expect(fields).toContain("id");
+  });
+
+  it("filters PII rows from SHOW INDEX FROM <table>", async () => {
+    // The table has indexes on `email` (PII) and `image_url` (non-PII). The
+    // PII-indexed row must be dropped so the index name itself doesn't leak
+    // the indexed column.
+    const { executeReadOnlyQuery } = await reloadDbModule({
+      ENABLE_PII_REDACTION: "true",
+      PII_ALLOW_INTROSPECTION: undefined,
+      PII_BLOCK_INTROSPECTION: undefined,
+    });
+    const result = await executeReadOnlyQuery<any>(
+      `SHOW INDEX FROM ${DB_NAME}.pii_users`,
+    );
+    expect(result.isError).toBe(false);
+    const rows = JSON.parse(result.content[0].text) as Array<{
+      Column_name: string;
+    }>;
+    const cols = rows.map((r) => r.Column_name);
+    expect(cols).not.toContain("email");
+    expect(cols).toContain("image_url");
+  });
+
+  it("rejects SHOW CREATE TABLE (statement-shaped, not filterable)", async () => {
+    // SHOW CREATE TABLE returns the full DDL as a string — no row shape to
+    // filter. We block it rather than try to regex-strip PII column lines.
+    const { executeReadOnlyQuery } = await reloadDbModule({
+      ENABLE_PII_REDACTION: "true",
+      PII_ALLOW_INTROSPECTION: undefined,
+      PII_BLOCK_INTROSPECTION: undefined,
+    });
+    const result = await executeReadOnlyQuery<any>(
+      `SHOW CREATE TABLE ${DB_NAME}.pii_users`,
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("introspection");
+    expect(result.content[0].text).toContain("PII_ALLOW_INTROSPECTION");
+  });
+
+  it("rejects SELECT FROM information_schema.columns (too many shapes to filter safely)", async () => {
+    const { executeReadOnlyQuery } = await reloadDbModule({
+      ENABLE_PII_REDACTION: "true",
+      PII_ALLOW_INTROSPECTION: undefined,
+      PII_BLOCK_INTROSPECTION: undefined,
     });
     const result = await executeReadOnlyQuery<any>(
       `SELECT column_name FROM information_schema.columns WHERE table_name = 'pii_users'`,
@@ -560,30 +663,57 @@ describe("PII Redaction – integration", () => {
     expect(result.content[0].text).toContain("introspection");
   });
 
-  it("PII_ALLOW_INTROSPECTION=true opts out of the introspection gate", async () => {
+  it("PII_BLOCK_INTROSPECTION=true restores the old hard-block behaviour", async () => {
+    // Strict-mode escape valve: operators who don't trust the row filter
+    // can still get the original blanket rejection.
+    const { executeReadOnlyQuery } = await reloadDbModule({
+      ENABLE_PII_REDACTION: "true",
+      PII_ALLOW_INTROSPECTION: undefined,
+      PII_BLOCK_INTROSPECTION: "true",
+    });
+    const result = await executeReadOnlyQuery<any>(
+      `SHOW COLUMNS FROM ${DB_NAME}.pii_users`,
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("introspection");
+  });
+
+  it("PII_ALLOW_INTROSPECTION=true bypasses filtering entirely (raw results)", async () => {
+    // The bypass returns the unfiltered SHOW COLUMNS result. The value-level
+    // redactor still runs on the response (string `email` matches the
+    // column-name heuristic on the result keys), but the rows themselves
+    // are present, including PII column names.
     const { executeReadOnlyQuery } = await reloadDbModule({
       ENABLE_PII_REDACTION: "true",
       PII_ALLOW_INTROSPECTION: "true",
-      // SHOW COLUMNS results contain a `Field` column whose values are
-      // column names; these names happen to include things like `email`,
-      // which the value-level redactor will then mask. That's fine — we
-      // only need to assert that the executor accepted the query and ran
-      // it (no longer treating it as a hard rejection).
+      PII_BLOCK_INTROSPECTION: undefined,
     });
     const result = await executeReadOnlyQuery<any>(
       `SHOW COLUMNS FROM ${DB_NAME}.pii_users`,
     );
     expect(result.isError).toBe(false);
+    const fields = (JSON.parse(result.content[0].text) as Array<{ Field: string }>).map(
+      (r) => r.Field,
+    );
+    // Bypass means PII columns surface in the response.
+    expect(fields).toContain("email");
+    expect(fields).toContain("first_name");
   });
 
   it("does not block introspection when ENABLE_PII_REDACTION is unset", async () => {
     const { executeReadOnlyQuery } = await reloadDbModule({
       ENABLE_PII_REDACTION: undefined,
       PII_ALLOW_INTROSPECTION: undefined,
+      PII_BLOCK_INTROSPECTION: undefined,
     });
     const result = await executeReadOnlyQuery<any>(
       `SHOW COLUMNS FROM ${DB_NAME}.pii_users`,
     );
     expect(result.isError).toBe(false);
+    // Without redaction enabled, no filtering — every column comes back.
+    const fields = (JSON.parse(result.content[0].text) as Array<{ Field: string }>).map(
+      (r) => r.Field,
+    );
+    expect(fields).toContain("email");
   });
 });

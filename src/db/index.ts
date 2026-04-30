@@ -26,8 +26,15 @@ import {
   PII_ALLOW_SELECT_STAR,
   PII_ALLOW_REFERENCES,
   PII_ALLOW_INTROSPECTION,
+  PII_BLOCK_INTROSPECTION,
 } from "./../config/index.js";
-import { redactPII, isPIIColumn, DEFAULT_PII_COLUMNS } from "./../security/redact.js";
+import {
+  redactPII,
+  isPIIColumn,
+  DEFAULT_PII_COLUMNS,
+  filterIntrospectionRows,
+  type FilterableIntrospectionKind,
+} from "./../security/redact.js";
 
 // Force read-only mode in multi-DB mode unless explicitly configured otherwise
 if (isMultiDbMode && process.env.MULTI_DB_WRITE_MODE !== "true") {
@@ -219,29 +226,44 @@ async function executeReadOnlyQuery<T>(sql: string): Promise<T> {
       } as T;
     }
 
-    // Introspection guard: refuse queries that enumerate schema metadata so
-    // the LLM can't bypass the (filtered) `mysql://tables/{name}` resource
-    // by running `SHOW COLUMNS`, `DESCRIBE`, or
-    // `SELECT ... FROM information_schema.columns` directly.
+    // Introspection guard: filter PII columns out of row-shaped introspection
+    // results (SHOW COLUMNS / DESCRIBE / SHOW INDEX), and reject the rest
+    // (SHOW CREATE TABLE, information_schema.*, mysql.*) which can't be
+    // filtered safely. PII_ALLOW_INTROSPECTION=true bypasses both branches.
+    // PII_BLOCK_INTROSPECTION=true restores the old hard-block behaviour.
+    let introspectionFilterKind: FilterableIntrospectionKind | null = null;
     if (ENABLE_PII_REDACTION && !PII_ALLOW_INTROSPECTION) {
       const intro = isIntrospectionQuery(sql);
       if (intro.kind) {
-        log(
-          "error",
-          `Refusing introspection query (${intro.kind}) while PII redaction is enabled.`,
-        );
-        return {
-          content: [
-            {
-              type: "text",
-              text:
-                `Error: SQL introspection (${intro.kind}) is not permitted while PII redaction is enabled. ` +
-                `Use the mysql://tables and mysql://tables/{name} MCP resources to inspect schemas (PII columns are filtered there). ` +
-                `Set PII_ALLOW_INTROSPECTION=true to override this policy.`,
-            },
-          ],
-          isError: true,
-        } as T;
+        const filterable: FilterableIntrospectionKind | null =
+          intro.kind === "show_columns" ||
+          intro.kind === "describe" ||
+          intro.kind === "show_index"
+            ? intro.kind
+            : null;
+
+        if (PII_BLOCK_INTROSPECTION || !filterable) {
+          log(
+            "error",
+            `Refusing introspection query (${intro.kind}) while PII redaction is enabled.`,
+          );
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  `Error: SQL introspection (${intro.kind}) is not permitted while PII redaction is enabled. ` +
+                  `Use the mysql://tables and mysql://tables/{name} MCP resources to inspect schemas (PII columns are filtered there), ` +
+                  `or use SHOW COLUMNS / DESCRIBE / SHOW INDEX (PII columns will be filtered from the result). ` +
+                  `Set PII_ALLOW_INTROSPECTION=true to bypass this policy entirely.`,
+              },
+            ],
+            isError: true,
+          } as T;
+        }
+        // Filterable kind: allow the query through; we'll filter PII rows
+        // from the result before returning it.
+        introspectionFilterKind = filterable;
       }
     }
 
@@ -279,24 +301,27 @@ async function executeReadOnlyQuery<T>(sql: string): Promise<T> {
       }
     }
 
-    // Check the type of query
-    const queryTypes = await getQueryTypes(sql);
+    // Filterable introspection statements (SHOW COLUMNS / DESCRIBE / SHOW INDEX)
+    // are inherently read-only and `node-sql-parser` doesn't model them, so
+    // we skip the queryType + permission + write-routing block entirely and
+    // execute them directly below.
+    let queryTypes: string[] = [];
+    let schema: string | null = null;
+    let isUpdateOperation = false;
+    let isInsertOperation = false;
+    let isDeleteOperation = false;
+    let isDDLOperation = false;
 
-    // Get schema for permission checking
-    const schema = extractSchemaFromQuery(sql);
-
-    const isUpdateOperation = queryTypes.some((type) =>
-      ["update"].includes(type),
-    );
-    const isInsertOperation = queryTypes.some((type) =>
-      ["insert"].includes(type),
-    );
-    const isDeleteOperation = queryTypes.some((type) =>
-      ["delete"].includes(type),
-    );
-    const isDDLOperation = queryTypes.some((type) =>
-      ["create", "alter", "drop", "truncate"].includes(type),
-    );
+    if (!introspectionFilterKind) {
+      queryTypes = await getQueryTypes(sql);
+      schema = extractSchemaFromQuery(sql);
+      isUpdateOperation = queryTypes.some((type) => ["update"].includes(type));
+      isInsertOperation = queryTypes.some((type) => ["insert"].includes(type));
+      isDeleteOperation = queryTypes.some((type) => ["delete"].includes(type));
+      isDDLOperation = queryTypes.some((type) =>
+        ["create", "alter", "drop", "truncate"].includes(type),
+      );
+    }
 
     // Check schema-specific permissions
     if (isInsertOperation && !isInsertAllowedForSchema(schema)) {
@@ -404,12 +429,49 @@ async function executeReadOnlyQuery<T>(sql: string): Promise<T> {
         await connection.query("SET SESSION TRANSACTION READ WRITE");
       }
 
+      // For introspection results we drop PII rows BEFORE the value-level
+      // redactor runs. The order matters because once a row is dropped, its
+      // metadata (e.g. column type, comment) can't leak via the redactor
+      // either. Fail closed on unrecognised row shape — the classifier
+      // believed this was a filterable introspection statement, but the
+      // result rows don't have the expected `Field`/`Column_name` key. That
+      // mismatch usually means an EXPLAIN of a non-table slipped through;
+      // we'd rather refuse than return raw metadata.
+      let intermediate: unknown = rows;
+      if (introspectionFilterKind) {
+        const piiList = [...DEFAULT_PII_COLUMNS, ...PII_EXTRA_COLUMNS];
+        const filtered = filterIntrospectionRows(
+          rows,
+          introspectionFilterKind,
+          (col) => isPIIColumn(col, piiList, PII_EXTRA_COLUMN_PATTERNS),
+        );
+        if (filtered === null) {
+          log(
+            "error",
+            `Refusing introspection result (${introspectionFilterKind}): unrecognised row shape, cannot filter PII safely.`,
+          );
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  `Error: could not safely filter introspection result for kind '${introspectionFilterKind}'. ` +
+                  `Use SHOW COLUMNS / DESCRIBE / SHOW INDEX against a real table, ` +
+                  `or set PII_ALLOW_INTROSPECTION=true to bypass filtering.`,
+              },
+            ],
+            isError: true,
+          } as T;
+        }
+        intermediate = filtered;
+      }
+
       const payload = ENABLE_PII_REDACTION
-        ? redactPII(rows, {
+        ? redactPII(intermediate, {
             extraColumns: PII_EXTRA_COLUMNS,
             columnPatterns: PII_EXTRA_COLUMN_PATTERNS,
           })
-        : rows;
+        : intermediate;
 
       return {
         content: [

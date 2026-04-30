@@ -10,7 +10,10 @@ import {
   isPIIColumn,
   applyPatternMasks,
   DEFAULT_PII_COLUMNS,
+  filterIntrospectionRows,
 } from "../../src/security/redact.js";
+
+const isPII = (col: string) => isPIIColumn(col, DEFAULT_PII_COLUMNS, []);
 
 describe("redactPII - feature behaviour", () => {
   it("leaves non-PII data untouched", () => {
@@ -253,5 +256,126 @@ describe("redactPII - nested structures", () => {
     const rows = [{ id: 1, email: null, phone: null }];
     const out = redactPII(rows);
     expect(out[0]).toEqual({ id: 1, email: null, phone: null });
+  });
+});
+
+describe("filterIntrospectionRows", () => {
+  describe("SHOW COLUMNS / DESCRIBE shape (Field key)", () => {
+    // The actual shape mysql2 returns for SHOW COLUMNS / DESCRIBE: each row
+    // is keyed by `Field`, `Type`, `Null`, `Key`, `Default`, `Extra`. This
+    // test pins behaviour against that exact shape.
+    const rows = [
+      { Field: "id", Type: "int", Null: "NO", Key: "PRI", Default: null, Extra: "auto_increment" },
+      { Field: "email", Type: "varchar(255)", Null: "YES", Key: "", Default: null, Extra: "" },
+      { Field: "first_name", Type: "varchar(128)", Null: "YES", Key: "", Default: null, Extra: "" },
+      { Field: "registration_date", Type: "datetime", Null: "YES", Key: "", Default: null, Extra: "" },
+      { Field: "last_name", Type: "varchar(128)", Null: "YES", Key: "", Default: null, Extra: "" },
+    ];
+
+    it("drops PII rows and keeps non-PII rows for kind=show_columns", () => {
+      const out = filterIntrospectionRows(rows, "show_columns", isPII);
+      expect(out).not.toBeNull();
+      const fields = out!.map((r) => r.Field);
+      expect(fields).toEqual(["id", "registration_date"]);
+    });
+
+    it("drops PII rows for kind=describe (same row shape)", () => {
+      const out = filterIntrospectionRows(rows, "describe", isPII);
+      expect(out!.map((r) => r.Field)).toEqual(["id", "registration_date"]);
+    });
+
+    it("preserves SHOW FULL COLUMNS extra fields (Collation/Privileges/Comment)", () => {
+      // SHOW FULL COLUMNS adds keys but the `Field` key still drives the filter.
+      const fullRows = rows.map((r) => ({
+        ...r,
+        Collation: null,
+        Privileges: "select,insert,update,references",
+        Comment: "",
+      }));
+      const out = filterIntrospectionRows(fullRows, "show_columns", isPII);
+      expect(out).toHaveLength(2);
+      expect(out![0]).toMatchObject({
+        Field: "id",
+        Privileges: "select,insert,update,references",
+      });
+    });
+  });
+
+  describe("SHOW INDEX / SHOW KEYS shape (Column_name key)", () => {
+    // Real mysql2 shape from `SHOW INDEX FROM <table>`. Filter applies to
+    // `Column_name` so rows that index a PII column are dropped — the
+    // existence of the index would itself reveal the column name.
+    const rows = [
+      { Table: "u", Non_unique: 0, Key_name: "PRIMARY", Seq_in_index: 1, Column_name: "id", Index_type: "BTREE" },
+      { Table: "u", Non_unique: 1, Key_name: "idx_email", Seq_in_index: 1, Column_name: "email", Index_type: "BTREE" },
+      { Table: "u", Non_unique: 1, Key_name: "idx_first_name", Seq_in_index: 1, Column_name: "first_name", Index_type: "BTREE" },
+    ];
+
+    it("drops rows where Column_name is PII", () => {
+      const out = filterIntrospectionRows(rows, "show_index", isPII);
+      expect(out!.map((r) => r.Column_name)).toEqual(["id"]);
+    });
+  });
+
+  describe("edge cases", () => {
+    it("returns [] for an empty result (not null — empty is well-formed)", () => {
+      expect(filterIntrospectionRows([], "show_columns", isPII)).toEqual([]);
+      expect(filterIntrospectionRows([], "show_index", isPII)).toEqual([]);
+    });
+
+    it("returns null when the row shape lacks the expected key", () => {
+      // Simulates an EXPLAIN <SELECT> result: the rows are well-formed
+      // objects but have nothing resembling a `Field` column. Caller is
+      // expected to fail closed and reject the query.
+      const rows = [{ id: 1, select_type: "SIMPLE", table: "users" }];
+      expect(filterIntrospectionRows(rows, "show_columns", isPII)).toBeNull();
+    });
+
+    it("returns null when input is not an array", () => {
+      expect(
+        filterIntrospectionRows(
+          "not an array" as unknown as object[],
+          "show_columns",
+          isPII,
+        ),
+      ).toBeNull();
+      expect(
+        filterIntrospectionRows(
+          { Field: "email" } as unknown as object[],
+          "show_columns",
+          isPII,
+        ),
+      ).toBeNull();
+    });
+
+    it("does case-insensitive matching on the row key", () => {
+      // Some drivers/configs may lowercase column names. The filter must
+      // still find the relevant key.
+      const rows = [
+        { field: "id", type: "int" },
+        { field: "email", type: "varchar(255)" },
+      ];
+      const out = filterIntrospectionRows(rows, "show_columns", isPII);
+      expect(out!.map((r) => r.field)).toEqual(["id"]);
+    });
+
+    it("does case-insensitive PII matching on the column value", () => {
+      // `EMAIL` and `email` should both match the substring "email" rule.
+      const rows = [
+        { Field: "EMAIL_ADDRESS", Type: "varchar(255)" },
+        { Field: "USER_ID", Type: "int" },
+      ];
+      const out = filterIntrospectionRows(rows, "show_columns", isPII);
+      expect(out!.map((r) => r.Field)).toEqual(["USER_ID"]);
+    });
+
+    it("returns the array unchanged when no row matches the PII rule", () => {
+      const rows = [
+        { Field: "id", Type: "int" },
+        { Field: "status", Type: "varchar(32)" },
+      ];
+      const out = filterIntrospectionRows(rows, "show_columns", isPII);
+      expect(out).toEqual(rows);
+    });
   });
 });

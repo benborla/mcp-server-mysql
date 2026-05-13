@@ -379,3 +379,134 @@ describe("filterIntrospectionRows", () => {
     });
   });
 });
+
+describe("JSON-in-string redaction", () => {
+  describe("audit table patterns", () => {
+    it("redacts PII fields inside a JSON object stored in new_value", () => {
+      const row = {
+        id: 1,
+        new_value: JSON.stringify({ first_name: "John", last_name: "Doe", status: "active" }),
+      };
+      const out = redactPII(row) as typeof row;
+      const parsed = JSON.parse(out.new_value);
+      expect(parsed.first_name).not.toBe("John");
+      expect(parsed.last_name).not.toBe("Doe");
+      expect(parsed.status).toBe("active");
+    });
+
+    it("redacts address fields inside old_value JSON", () => {
+      const row = {
+        id: 2,
+        old_value: JSON.stringify({ address: "123 Main St", zip: "90210", city: "Anytown" }),
+      };
+      const out = redactPII(row) as typeof row;
+      const parsed = JSON.parse(out.old_value);
+      expect(parsed.address).not.toBe("123 Main St");
+      expect(parsed.zip).not.toBe("90210");
+      expect(parsed.city).toBe("Anytown");
+    });
+
+    it("redacts PII inside a changes/payload column", () => {
+      const row = {
+        event: "user.updated",
+        payload: JSON.stringify({ given_name: "Alice", family_name: "Smith", role: "admin" }),
+        changes: JSON.stringify({ email: "alice@example.com", plan: "pro" }),
+      };
+      const out = redactPII(row) as typeof row;
+      const payload = JSON.parse(out.payload);
+      expect(payload.given_name).not.toBe("Alice");
+      expect(payload.family_name).not.toBe("Smith");
+      expect(payload.role).toBe("admin");
+      const changes = JSON.parse(out.changes);
+      expect(changes.email).not.toBe("alice@example.com");
+      expect(changes.plan).toBe("pro");
+    });
+  });
+
+  describe("new DEFAULT_PII_COLUMNS name variants", () => {
+    it("flags given_name and family_name (OAuth/OIDC)", () => {
+      expect(isPIIColumn("given_name")).toBe(true);
+      expect(isPIIColumn("family_name")).toBe(true);
+      expect(isPIIColumn("user_given_name")).toBe(true);
+    });
+
+    it("flags surname, forename, maiden_name", () => {
+      expect(isPIIColumn("surname")).toBe(true);
+      expect(isPIIColumn("forename")).toBe(true);
+      expect(isPIIColumn("maiden_name")).toBe(true);
+    });
+
+    it("flags preferred_name and legal_name", () => {
+      expect(isPIIColumn("preferred_name")).toBe(true);
+      expect(isPIIColumn("legal_name")).toBe(true);
+    });
+
+    it("does not false-positive on unrelated columns", () => {
+      expect(isPIIColumn("given")).toBe(false);
+      expect(isPIIColumn("family")).toBe(false);
+      expect(isPIIColumn("sur_id")).toBe(false);
+    });
+  });
+
+  describe("nested JSON strings", () => {
+    it("recursively redacts JSON inside a JSON string inside another JSON string", () => {
+      const inner = JSON.stringify({ first_name: "Bob", score: 99 });
+      const outer = JSON.stringify({ nested: inner, id: 5 });
+      const row = { event_data: outer };
+      const out = redactPII(row) as typeof row;
+      const outerParsed = JSON.parse(out.event_data);
+      const innerParsed = JSON.parse(outerParsed.nested);
+      expect(innerParsed.first_name).not.toBe("Bob");
+      expect(innerParsed.score).toBe(99);
+      expect(outerParsed.id).toBe(5);
+    });
+
+    it("walks arrays inside JSON strings", () => {
+      const row = {
+        data: JSON.stringify([
+          { first_name: "Alice", id: 1 },
+          { first_name: "Bob", id: 2 },
+        ]),
+      };
+      const out = redactPII(row) as typeof row;
+      const parsed: Array<{ first_name: string; id: number }> = JSON.parse(out.data);
+      expect(parsed[0].first_name).not.toBe("Alice");
+      expect(parsed[1].first_name).not.toBe("Bob");
+      expect(parsed[0].id).toBe(1);
+      expect(parsed[1].id).toBe(2);
+    });
+  });
+
+  describe("non-JSON strings are unaffected", () => {
+    it("leaves plain strings untouched", () => {
+      const row = { description: "No PII here", id: 1 };
+      expect(redactPII(row)).toEqual(row);
+    });
+
+    it("leaves invalid JSON strings untouched", () => {
+      const row = { blob: "{not valid json", id: 1 };
+      expect(redactPII(row)).toEqual(row);
+    });
+
+    it("leaves JSON primitives (non-object/array) untouched", () => {
+      const row = { flag: "true", count: "42" };
+      expect(redactPII(row)).toEqual(row);
+    });
+  });
+
+  describe("parseJsonStrings opt-out", () => {
+    it("does not parse JSON strings when parseJsonStrings: false", () => {
+      const jsonStr = JSON.stringify({ first_name: "John", address: "123 Main St" });
+      const row = { new_value: jsonStr };
+      const out = redactPII(row, { parseJsonStrings: false }) as typeof row;
+      // The string must be returned unchanged (first_name not flagged at string level)
+      expect(out.new_value).toBe(jsonStr);
+    });
+
+    it("still applies pattern masks (email/phone) on raw strings when opt-out", () => {
+      const row = { new_value: "contact: alice@example.com" };
+      const out = redactPII(row, { parseJsonStrings: false }) as typeof row;
+      expect(out.new_value).not.toContain("alice@example.com");
+    });
+  });
+});

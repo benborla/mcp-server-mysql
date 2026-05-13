@@ -32,6 +32,13 @@ export const DEFAULT_PII_COLUMNS: readonly string[] = [
   "last_name",
   "full_name",
   "middle_name",
+  "given_name",
+  "family_name",
+  "surname",
+  "forename",
+  "maiden_name",
+  "preferred_name",
+  "legal_name",
   "address",
   "street",
   "zip",
@@ -192,6 +199,14 @@ export interface RedactOptions {
   extraColumns?: readonly string[];
   /** Additional regex patterns tested against the lowercased column name. */
   columnPatterns?: readonly RegExp[];
+  /**
+   * When true (the default), string values that contain a valid JSON object or
+   * array are parsed and recursively redacted before being re-serialised. This
+   * catches PII inside audit-table columns like `new_value` / `old_value` whose
+   * column name alone does not trigger a PII heuristic. Set to false to opt out
+   * if JSON parsing overhead is a concern.
+   */
+  parseJsonStrings?: boolean;
 }
 
 /**
@@ -210,8 +225,9 @@ export function redactPII<T>(value: T, options: RedactOptions = {}): T {
       ? [...DEFAULT_PII_COLUMNS, ...cleanedExtras]
       : DEFAULT_PII_COLUMNS);
   const patterns = options.columnPatterns ?? [];
+  const parseJsonStrings = options.parseJsonStrings !== false;
   const stats = { fields: 0, columns: new Set<string>() };
-  const result = walk(value, columns, patterns, null, stats) as T;
+  const result = walk(value, columns, patterns, null, stats, parseJsonStrings) as T;
   if (stats.fields > 0) {
     log("info", `[redact] masked ${stats.fields} field(s) across column(s): ${[...stats.columns].join(", ")}`);
   } else {
@@ -320,6 +336,7 @@ function walk(
   patterns: readonly RegExp[],
   parentMatch: string | null,
   stats: { fields: number; columns: Set<string> },
+  parseJsonStrings: boolean,
 ): unknown {
   if (value == null) return value;
 
@@ -328,11 +345,31 @@ function walk(
       stats.fields++;
       return maskByColumn(value);
     }
+    // Attempt to parse JSON-encoded objects/arrays so that PII fields nested
+    // inside audit columns like `new_value` are redacted by the same
+    // column-name heuristics as top-level fields.
+    if (parseJsonStrings) {
+      const trimmed = value.trim();
+      if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
+        try {
+          const parsed: unknown = JSON.parse(trimmed);
+          if (typeof parsed === "object" && parsed !== null) {
+            return JSON.stringify(
+              walk(parsed, columns, patterns, null, stats, parseJsonStrings),
+            );
+          }
+        } catch {
+          // Not valid JSON — fall through to pattern masks below.
+        }
+      }
+    }
     return applyPatternMasks(value);
   }
 
   if (Array.isArray(value)) {
-    return value.map((item) => walk(item, columns, patterns, parentMatch, stats));
+    return value.map((item) =>
+      walk(item, columns, patterns, parentMatch, stats, parseJsonStrings),
+    );
   }
 
   if (typeof value === "object") {
@@ -347,7 +384,7 @@ function walk(
         log("info", `[redact] column "${key}" matched PII rule: ${match}`);
         stats.columns.add(key);
       }
-      out[key] = walk(child, columns, patterns, match, stats);
+      out[key] = walk(child, columns, patterns, match, stats, parseJsonStrings);
     }
     return out;
   }

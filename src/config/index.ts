@@ -129,6 +129,14 @@ export const PII_EXTRA_COLUMN_PATTERNS: readonly RegExp[] = parseColumnPatterns(
   process.env.PII_EXTRA_COLUMN_PATTERNS,
 );
 
+// When PII redaction is enabled, string column values that contain a valid JSON
+// object or array are parsed and their inner fields are redacted by the same
+// column-name heuristics as top-level columns. This catches PII inside audit
+// columns like `new_value` / `old_value` whose column name alone does not
+// trigger a PII rule. Set to false only if JSON parsing overhead is a concern.
+export const PII_REDACT_JSON_STRINGS =
+  process.env.PII_REDACT_JSON_STRINGS !== "false";
+
 // When PII redaction is enabled, queries with `SELECT *` (or `t.*`) are
 // rejected by default to force the LLM to project explicit column lists.
 // Combined with PII column filtering in the schema response, this prevents

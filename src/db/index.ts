@@ -23,6 +23,7 @@ import {
   ENABLE_PII_REDACTION,
   PII_EXTRA_COLUMNS,
   PII_EXTRA_COLUMN_PATTERNS,
+  PII_REDACT_JSON_STRINGS,
   PII_ALLOW_SELECT_STAR,
   PII_ALLOW_REFERENCES,
   PII_ALLOW_INTROSPECTION,
@@ -487,6 +488,7 @@ async function executeReadOnlyQuery<T>(sql: string): Promise<T> {
         ? redactPII(intermediate, {
             extraColumns: PII_EXTRA_COLUMNS,
             columnPatterns: PII_EXTRA_COLUMN_PATTERNS,
+            parseJsonStrings: PII_REDACT_JSON_STRINGS,
           })
         : intermediate;
 

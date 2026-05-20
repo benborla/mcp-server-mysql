@@ -171,6 +171,14 @@ export const mcpConfig = {
           dateStrings: true,
         }
       : {}),
+    // Return BIGINT/DECIMAL values as strings to prevent precision loss
+    // This is essential for tables using snowflake IDs (19-digit IDs) which exceed Number.MAX_SAFE_INTEGER (2^53-1)
+    ...(process.env.MYSQL_BIG_NUMBER_STRINGS === "true"
+      ? {
+          supportBigNumbers: true,
+          bigNumberStrings: true,
+        }
+      : {}),
   },
   paths: {
     schema: "schema",

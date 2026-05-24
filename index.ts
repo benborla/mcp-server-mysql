@@ -467,7 +467,7 @@ if (isMainModule()) {
             return;
           }
           try {
-            const server = mcpServer;
+            const server = createMcpServer({ config: { debug: false } });
             const transport: StreamableHTTPServerTransport =
               new StreamableHTTPServerTransport({
                 sessionIdGenerator: undefined,

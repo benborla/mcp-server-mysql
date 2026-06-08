@@ -83,5 +83,13 @@
     "mcp-patch",
     "mcp-options",
     "mcp-head"
-  ]
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/benborla/mcp-server-mysql.git"
+  },
+  "bugs": {
+    "url": "https://github.com/benborla/mcp-server-mysql/issues"
+  },
+  "homepage": "https://github.com/benborla/mcp-server-mysql"
 }

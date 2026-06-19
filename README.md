@@ -1,5 +1,7 @@
 # MCP Server for MySQL
 
+[![Verified on MseeP](https://mseep.ai/badge.svg)](https://mseep.ai/app/d430fea3-47eb-4f1a-a686-92c17f7d380f)
+
 [![Trust Score](https://archestra.ai/mcp-catalog/api/badge/quality/benborla/mcp-server-mysql)](https://archestra.ai/mcp-catalog/benborla__mcp-server-mysql)
 
 ## Sponsor — Bloome

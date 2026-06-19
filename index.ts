@@ -27,7 +27,11 @@ import {
   IS_REMOTE_MCP,
   REMOTE_SECRET_KEY,
   PORT,
+  ENABLE_PII_REDACTION,
+  PII_EXTRA_COLUMNS,
+  PII_EXTRA_COLUMN_PATTERNS,
 } from "./src/config/index.js";
+import { isPIIColumn, DEFAULT_PII_COLUMNS } from "./src/security/redact.js";
 import {
   safeExit,
   getPool,
@@ -268,12 +272,32 @@ export default function createMcpServer({
         queryParams,
       )) as ColumnRow[];
 
+      // When PII redaction is enabled, hide PII column names from the schema
+      // response so the LLM never learns they exist and won't generate SQL
+      // referencing them. Combined with the SELECT * guard in executeReadOnlyQuery,
+      // this gives end-to-end protection: the LLM only ever sees safe columns
+      // and is forced to project them explicitly.
+      const piiColumnList = [...DEFAULT_PII_COLUMNS, ...PII_EXTRA_COLUMNS];
+      const filtered = ENABLE_PII_REDACTION
+        ? results.filter(
+            (col) =>
+              !isPIIColumn(col.column_name, piiColumnList, PII_EXTRA_COLUMN_PATTERNS),
+          )
+        : results;
+
+      if (ENABLE_PII_REDACTION && filtered.length !== results.length) {
+        log(
+          "info",
+          `[redact] hid ${results.length - filtered.length} PII column(s) from schema for table "${tableName}"`,
+        );
+      }
+
       return {
         contents: [
           {
             uri: request.params.uri,
             mimeType: "application/json",
-            text: JSON.stringify(results, null, 2),
+            text: JSON.stringify(filtered, null, 2),
           },
         ],
       };

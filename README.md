@@ -561,6 +561,60 @@ When `MYSQL_CONNECTION_STRING` is provided, it takes precedence over individual 
 - `SCHEMA_DELETE_PERMISSIONS`: Schema-specific DELETE permissions
 - `SCHEMA_DDL_PERMISSIONS`: Schema-specific DDL permissions
 - `MULTI_DB_WRITE_MODE`: Enable write operations in multi-DB mode (default: "false")
+- `ENABLE_PII_REDACTION`: When set to `"true"`, read-only query results are walked and likely PII values are replaced with shape-preserving partial masks before being returned (default: `"false"`). Detection combines a built-in column-name list (`email`, `ssn`, `phone`, `first_name`, `address`, `credit_card`, `password`, `api_key`, `token`, etc.) with regex scanning of values (email, US phone, SSN, IPv4, Luhn-valid credit card). Examples:
+  - `jane.doe@example.com` -> `j***@e***.com`
+  - `415-555-0134` -> `***-***-0134`
+  - `123-45-6789` -> `***-**-6789`
+  - `4111 1111 1111 1111` -> `****-****-****-1111`
+  - `192.168.1.42` -> `***.***.***.42`
+  - Values in columns matched by heuristic but with no known pattern are masked as `J********` (first character preserved, tail masked, capped at 8 asterisks).
+
+  Redaction runs only on read-only query results. Schema/table listing and write-operation response summaries are unaffected. This is a defense-in-depth aid, not a substitute for column-level access controls in MySQL.
+
+  **Extending the column heuristic.** Two optional env vars let operators add domain-specific columns without touching code. Both require `ENABLE_PII_REDACTION=true` to have any effect, both are additive to the built-in list, and both reuse the generic mask (`first character + up to 8 asterisks`).
+
+  - `PII_EXTRA_COLUMNS`: comma-separated substrings, case-insensitive, matched against the lowercased column name. Empty or whitespace-only entries are ignored (prevents `PII_EXTRA_COLUMNS=""` from accidentally wiping the whole response). Example:
+
+    ```bash
+    PII_EXTRA_COLUMNS=image_url,signed_url,internal_note
+    ```
+
+  - `PII_EXTRA_COLUMN_PATTERNS`: semicolon-separated JavaScript regex *bodies* — no `/` delimiters, no explicit flags. Each entry is compiled with the `i` flag and tested against the lowercased column name. Invalid patterns are logged to stderr and skipped so one bad entry cannot crash the server. Example:
+
+    ```bash
+    PII_EXTRA_COLUMN_PATTERNS=^(signed|protected)_.*;^.*_token$
+    ```
+
+    Use this when a substring is too blunt — e.g., you need an anchor (`^/$`), alternation, or a character class. Semicolon is the delimiter (not comma) because regex character classes routinely contain commas (`[a-z,.]`), while literal semicolons are rare.
+
+  A column is flagged if it matches ANY built-in substring, OR any `PII_EXTRA_COLUMNS` substring, OR any `PII_EXTRA_COLUMN_PATTERNS` regex. Value-level pattern masks (email / SSN / IP / card) still run first, so an `image_url` whose value contains an email gets the richer mask, not the generic one.
+
+  **Hardening guards (defence in depth).** When `ENABLE_PII_REDACTION=true` is set, three additional pre-execution guards are also enabled by default. They are independent of the value-level redactor and protect against cases the redactor cannot, on its own, catch (column aliases, schema enumeration, accidental wildcards). Each guard has a dedicated opt-out for tables / workflows that don't need it:
+
+  - `PII_ALLOW_SELECT_STAR` (default `"false"`): when `false`, queries with `SELECT *` or `t.*` are rejected to force the LLM to project explicit columns. `COUNT(*)` and other aggregates are not affected. Set to `"true"` to allow wildcard projections (the value-level redactor still runs).
+  - `PII_ALLOW_REFERENCES` (default `"false"`): when `false`, any reference to a column whose name matches a PII rule (built-in list, `PII_EXTRA_COLUMNS`, or `PII_EXTRA_COLUMN_PATTERNS`) causes the query to be rejected — regardless of where the reference appears (projection, `WHERE`, `JOIN ON`, `GROUP BY`, `HAVING`, `ORDER BY`, subqueries, CTEs, `INSERT ... SELECT`). This closes the alias-bypass where `SELECT CONCAT(first_name, ' ', last_name) AS NAME` would return a cleartext full name because the result-key heuristic only sees the alias `NAME`. The error message names the offending column(s) so the LLM can self-correct. Set to `"true"` to disable the guard (e.g. for ETL pipelines that legitimately need to read or filter on PII columns).
+  - `PII_ALLOW_INTROSPECTION` (default `"false"`): controls how the server responds to schema-introspection statements. When `false`, the server applies a *kind-aware* policy:
+    - **Filtered (statement runs, PII rows are dropped from the response):** `SHOW COLUMNS`, `SHOW FULL COLUMNS`, `SHOW FIELDS`, `DESCRIBE`, `DESC`, `EXPLAIN <table>`, `SHOW INDEX`, `SHOW INDEXES`, `SHOW KEYS`. The LLM gets a list of *non-PII* columns to project — exactly enough to write a valid query, with PII column names invisible.
+    - **Pass-through (statement runs unchanged):** `SHOW TABLES`, `SHOW TABLE STATUS`, `SHOW DATABASES`, `SHOW SCHEMAS`, `SHOW CHARACTER SET`, `SHOW CHARSET`, `SHOW COLLATION`. These expose schema topology only — table/database names and charset/collation lists, no column-level information — so they are allowed to run as-is. They are still blocked when `PII_BLOCK_INTROSPECTION=true`.
+    - **Rejected (no row shape we can safely filter):** `SHOW CREATE TABLE`, `SHOW CREATE VIEW`, and any `SELECT` that touches `information_schema` or `mysql` (including via `JOIN` or subquery). For these, use `SHOW COLUMNS` / `DESCRIBE` instead, or use the `mysql://tables/{name}` MCP resource (also PII-filtered).
+
+    Set `PII_ALLOW_INTROSPECTION=true` to bypass this policy entirely and return raw, unfiltered results.
+
+  - `PII_BLOCK_INTROSPECTION` (default `"false"`): optional stricter mode. When `true`, restores the original "hard block" behaviour — every introspection statement is rejected outright (filterable kinds *and* the new pass-through kinds included), matching pre-2.0.3 behaviour. Useful when even filtered metadata or table-name enumeration is too revealing for the environment. Ignored when `PII_ALLOW_INTROSPECTION=true` (which always wins).
+
+  Each guard fires only when `ENABLE_PII_REDACTION=true`; with redaction off, the server's behaviour is unchanged.
+
+  **Known out-of-scope cases** (things the redactor does *not* catch — do not rely on it for these):
+
+  - **Column aliases (when the reference guard is disabled).** With `PII_ALLOW_REFERENCES=true` (or with `ENABLE_PII_REDACTION=false`), `SELECT first_name AS fn` returns the column key `fn`, which bypasses the column-name heuristic. Generic values without a regex shape (names, addresses) will be returned unmasked. Leaving `PII_ALLOW_REFERENCES=false` (the default) closes this gap by rejecting the query before it runs.
+  - **Numeric-typed PII.** SSNs or phone numbers stored as `BIGINT` / `INT` are returned as JS numbers; the walker only inspects string values, so these are not redacted.
+  - **JSON / text columns with structured PII.** JSON columns come back as strings. Regex-visible PII inside them (emails, phones, SSNs, IPs, cards) *is* masked, but generic fields like a nested `first_name` are not — the walker does not descend into JSON strings.
+  - **International formats not in the pattern set.** IPv6 addresses, non-US phone numbers (E.164 `+44 …`), non-US national identifiers (UK NI number, EU passport IDs, IBANs), international postal codes — all pass through unchanged.
+  - **Non-Luhn card-like digit runs.** 13–19 digit runs that fail the Luhn check are left alone. This is deliberate (to avoid clobbering order IDs and similar) but means any custom card/account numbering that does not satisfy Luhn will not be redacted.
+  - **`SHOW CREATE TABLE` / `information_schema` SELECTs.** These are statement-shaped (not row-shaped) or have too many possible result shapes (joins, `GROUP_CONCAT`, `COUNT`) for a row-based filter to be safe. They are rejected by default under `ENABLE_PII_REDACTION=true`. To inspect a table's columns under redaction, use `SHOW COLUMNS` / `DESCRIBE` (PII rows are filtered out of those) or the `mysql://tables/{name}` MCP resource (also filtered). Set `PII_ALLOW_INTROSPECTION=true` to bypass this and return the raw DDL / `information_schema` rows.
+  - **Filtered introspection still leaks column count and types of non-PII columns.** `SHOW COLUMNS` after filtering still tells the caller how many non-PII columns exist and their types. That's by design — discovery is the point — but the filter does not pretend the table doesn't exist or randomise the response.
+  - **Write-operation response summaries.** `Insert successful…`, `Update successful…`, `Delete successful…` strings are not scanned; the server does not echo inserted values into these summaries, but any future change that did would bypass redaction.
+  - **Binary / `Buffer` payloads and `Date` instances.** Both are passed through as-is to preserve their types; embedded PII inside a `Buffer` is not inspected.
 
 ### Timezone and Date Configuration
 

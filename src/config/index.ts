@@ -78,6 +78,104 @@ export const ALLOW_DDL_OPERATION = process.env.ALLOW_DDL_OPERATION === "true";
 export const MYSQL_DISABLE_READ_ONLY_TRANSACTIONS = 
   process.env.MYSQL_DISABLE_READ_ONLY_TRANSACTIONS === "true";
 
+// PII redaction: when enabled, read-only query results are walked and
+// sensitive values are partially masked before being returned to the client.
+// See src/security/redact.ts for the detection and masking rules.
+export const ENABLE_PII_REDACTION =
+  process.env.ENABLE_PII_REDACTION === "true";
+
+// Operator-defined additions to the column-name heuristic. Empty entries are
+// filtered out — an empty substring would match every key and mask the entire
+// response. Lowercased at parse time to match the key-lowercasing inside
+// `isPIIColumn`.
+export const PII_EXTRA_COLUMNS: readonly string[] = (
+  process.env.PII_EXTRA_COLUMNS ?? ""
+)
+  .split(",")
+  .map((s) => s.trim().toLowerCase())
+  .filter((s) => s.length > 0);
+
+/**
+ * Parse `PII_EXTRA_COLUMN_PATTERNS` into a list of compiled `RegExp` objects.
+ * Entries are semicolon-separated (not comma) so commas inside character
+ * classes like `[a-z,.]` stay unambiguous. Each entry is a regex *body* — no
+ * slash delimiters, no explicit flags. We compile with `i` so operators do
+ * not have to think about casing, and the runtime lowers the key before
+ * testing anyway.
+ *
+ * Invalid patterns are logged and skipped; one bad entry must not crash the
+ * server or poison the rest of the list.
+ */
+function parseColumnPatterns(raw: string | undefined): RegExp[] {
+  if (!raw) return [];
+  const out: RegExp[] = [];
+  for (const entry of raw.split(";")) {
+    const trimmed = entry.trim();
+    if (!trimmed) continue;
+    try {
+      out.push(new RegExp(trimmed, "i"));
+    } catch (err) {
+      console.error(
+        `[config] ignoring invalid PII_EXTRA_COLUMN_PATTERNS entry "${trimmed}": ${
+          (err as Error).message
+        }`,
+      );
+    }
+  }
+  return out;
+}
+
+export const PII_EXTRA_COLUMN_PATTERNS: readonly RegExp[] = parseColumnPatterns(
+  process.env.PII_EXTRA_COLUMN_PATTERNS,
+);
+
+// When PII redaction is enabled, string column values that contain a valid JSON
+// object or array are parsed and their inner fields are redacted by the same
+// column-name heuristics as top-level columns. This catches PII inside audit
+// columns like `new_value` / `old_value` whose column name alone does not
+// trigger a PII rule. Set to false only if JSON parsing overhead is a concern.
+export const PII_REDACT_JSON_STRINGS =
+  process.env.PII_REDACT_JSON_STRINGS !== "false";
+
+// When PII redaction is enabled, queries with `SELECT *` (or `t.*`) are
+// rejected by default to force the LLM to project explicit column lists.
+// Combined with PII column filtering in the schema response, this prevents
+// the LLM from accidentally pulling redacted columns it never saw.
+// Set `PII_ALLOW_SELECT_STAR=true` to opt out (e.g. for tables with no PII).
+export const PII_ALLOW_SELECT_STAR =
+  process.env.PII_ALLOW_SELECT_STAR === "true";
+
+// When PII redaction is enabled, any reference to a column whose name matches
+// a PII rule (built-in list, `PII_EXTRA_COLUMNS`, or `PII_EXTRA_COLUMN_PATTERNS`)
+// causes the query to be rejected — regardless of where in the query the
+// reference appears (projection, WHERE, JOIN ON, ORDER BY, subquery, ...).
+// This closes the alias-bypass where `CONCAT(first_name, ' ', last_name) AS NAME`
+// would render a redacted-column-aware result-key check useless.
+// Set `PII_ALLOW_REFERENCES=true` to opt out.
+export const PII_ALLOW_REFERENCES =
+  process.env.PII_ALLOW_REFERENCES === "true";
+
+// When PII redaction is enabled, queries that introspect schema metadata get
+// special handling so the LLM can discover non-PII columns without ever seeing
+// the PII ones:
+//   - `SHOW COLUMNS`, `SHOW FULL COLUMNS`, `DESCRIBE`, `DESC`, `EXPLAIN <table>`,
+//     `SHOW INDEX(ES)`, `SHOW KEYS` execute, and rows whose column-name field
+//     matches a PII rule are filtered out of the response.
+//   - `SHOW CREATE TABLE`, `SHOW CREATE VIEW`, `SHOW TABLES`, `SHOW TABLE STATUS`,
+//     and any SELECT against `information_schema` / `mysql` schema are rejected
+//     because they cannot be filtered safely without a custom parser.
+// Set `PII_ALLOW_INTROSPECTION=true` to bypass both behaviours and return raw
+// results unchanged.
+export const PII_ALLOW_INTROSPECTION =
+  process.env.PII_ALLOW_INTROSPECTION === "true";
+
+// Optional stricter mode: restores the original "hard block" behaviour for
+// every introspection statement (filterable kinds included). Useful when the
+// row-filter default is too permissive for an environment.
+// Ignored when `PII_ALLOW_INTROSPECTION=true` (which always wins).
+export const PII_BLOCK_INTROSPECTION =
+  process.env.PII_BLOCK_INTROSPECTION === "true";
+
 // Schema-specific permissions
 export const SCHEMA_INSERT_PERMISSIONS: SchemaPermissions =
   parseSchemaPermissions(process.env.SCHEMA_INSERT_PERMISSIONS);

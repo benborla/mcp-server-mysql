@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "mcp-server-mysql": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@benborla29/mcp-server-mysql"
+      ]
+    }
+  }
+}

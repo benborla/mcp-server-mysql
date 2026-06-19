@@ -99,6 +99,3 @@ pnpm test
 ## License
 
 MIT — see [LICENSE](LICENSE) for details.
-
-[![Verified on MseeP](https://mseep.ai/badge.svg)](https://mseep.ai/app/d430fea3-47eb-4f1a-a686-92c17f7d380f)
-[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/benborla-mcp-server-mysql-badge.png)](https://mseep.ai/app/benborla-mcp-server-mysql)

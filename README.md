@@ -2,6 +2,12 @@
 
 [![Trust Score](https://archestra.ai/mcp-catalog/api/badge/quality/benborla/mcp-server-mysql)](https://archestra.ai/mcp-catalog/benborla__mcp-server-mysql)
 
+## Sponsor — Bloome
+
+[![Bloome](assets/bloome.png)](https://bloome.im/login?ref=2x7GfeSw)
+
+Using mcp-server-mysql to let your AI query MySQL? [**Bloome**](https://bloome.im/login?ref=2x7GfeSw) brings that to your whole team — an AI-agent IM platform where AI agents are members of the chat. Connect your MCP tools and have agents inspect schemas, run queries, and answer data questions for everyone in one thread. Zero local setup, runs in the cloud, on web and mobile.
+
 ### Key Features of This Fork
 
 - ✅ **Claude Code Integration** - Optimized for use with Anthropic's Claude Code CLI

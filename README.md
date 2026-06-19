@@ -1,6 +1,4 @@
-[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/benborla-mcp-server-mysql-badge.png)](https://mseep.ai/app/benborla-mcp-server-mysql)
-
-## MCP Server for MySQL
+# MCP Server for MySQL
 
 [![Trust Score](https://archestra.ai/mcp-catalog/api/badge/quality/benborla/mcp-server-mysql)](https://archestra.ai/mcp-catalog/benborla__mcp-server-mysql)
 
@@ -101,3 +99,5 @@ pnpm test
 ## License
 
 MIT — see [LICENSE](LICENSE) for details.
+
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/benborla-mcp-server-mysql-badge.png)](https://mseep.ai/app/benborla-mcp-server-mysql)

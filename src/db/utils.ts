@@ -5,7 +5,10 @@ import SqlParser, { AST } from "node-sql-parser";
 const { Parser } = SqlParser;
 const parser = new Parser();
 
-// Extract schema from SQL query
+// Extract schema from SQL query using the AST parser for accuracy.
+// Previous regex-based extraction could be bypassed with SQL comments
+// (e.g. USE/**/schema_name) which allowed schema permission checks to
+// fall through to the global default.
 function extractSchemaFromQuery(sql: string): string | null {
   // Default schema from environment
   const defaultSchema = process.env.MYSQL_DB || null;
@@ -15,18 +18,31 @@ function extractSchemaFromQuery(sql: string): string | null {
     return defaultSchema;
   }
 
-  // Try to extract schema from query
+  // Use the AST parser to reliably extract schema information
+  try {
+    const astOrArray: AST | AST[] = parser.astify(sql, { database: "mysql" });
+    const statements = Array.isArray(astOrArray) ? astOrArray : [astOrArray];
 
-  // Case 1: USE database statement
-  const useMatch = sql.match(/USE\s+`?([a-zA-Z0-9_]+)`?/i);
-  if (useMatch && useMatch[1]) {
-    return useMatch[1];
-  }
+    for (const stmt of statements) {
+      // Case 1: USE database statement
+      if (stmt.type === "use" && (stmt as any).db) {
+        return (stmt as any).db;
+      }
 
-  // Case 2: database.table notation
-  const dbTableMatch = sql.match(/`?([a-zA-Z0-9_]+)`?\.`?[a-zA-Z0-9_]+`?/i);
-  if (dbTableMatch && dbTableMatch[1]) {
-    return dbTableMatch[1];
+      // Case 2: database.table notation in FROM/INTO clauses
+      const tables = (stmt as any).table || (stmt as any).from;
+      if (Array.isArray(tables)) {
+        for (const t of tables) {
+          if (t.db) {
+            return t.db;
+          }
+        }
+      } else if (tables && typeof tables === "object" && tables.db) {
+        return tables.db;
+      }
+    }
+  } catch (err: any) {
+    log("error", "Failed to parse SQL for schema extraction:", err.message);
   }
 
   // Return default if we couldn't find a schema in the query

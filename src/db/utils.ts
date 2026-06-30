@@ -33,11 +33,32 @@ function extractSchemaFromQuery(sql: string): string | null {
   return defaultSchema;
 }
 
+/**
+ * MySQL EXPLAIN accepts optional modifiers between EXPLAIN and the statement:
+ *   ANALYZE, EXTENDED, PARTITIONS, FORMAT=<word>
+ *
+ * node-sql-parser only understands bare `EXPLAIN <statement>` — any modifier
+ * after EXPLAIN causes a parse error. Strip them before handing to the parser
+ * so that e.g. `EXPLAIN ANALYZE SELECT …` is treated the same as
+ * `EXPLAIN SELECT …` (operation type `"explain"`, routed as read-only).
+ *
+ * Multiple modifiers may appear together, e.g. `EXPLAIN ANALYZE FORMAT=JSON`.
+ */
+const EXPLAIN_MODIFIER_RE =
+  /^(\s*EXPLAIN\s+)((?:ANALYZE\s+|EXTENDED\s+|PARTITIONS\s+|FORMAT\s*=\s*\w+\s+)+)/i;
+
+function stripExplainModifiers(sql: string): string {
+  return sql.replace(EXPLAIN_MODIFIER_RE, "$1");
+}
+
 async function getQueryTypes(query: string): Promise<string[]> {
   try {
     log("info", "Parsing SQL query: ", query);
+    // Strip unsupported EXPLAIN modifiers (ANALYZE, FORMAT=…, EXTENDED, PARTITIONS)
+    // before parsing so node-sql-parser can handle them.
+    const normalised = stripExplainModifiers(query);
     // Parse into AST or array of ASTs - only specify the database type
-    const astOrArray: AST | AST[] = parser.astify(query, { database: "mysql" });
+    const astOrArray: AST | AST[] = parser.astify(normalised, { database: "mysql" });
     const statements = Array.isArray(astOrArray) ? astOrArray : [astOrArray];
 
     // Map each statement to its lowercased type (e.g., 'select', 'update', 'insert', 'delete', etc.)

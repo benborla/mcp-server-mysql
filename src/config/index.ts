@@ -1,6 +1,6 @@
 import * as dotenv from "dotenv";
 import * as fs from "fs";
-import { SchemaPermissions } from "../types/index.js";
+import { SchemaPermissions, NamedConnection, NamedConnections } from "../types/index.js";
 import { parseSchemaPermissions, parseMySQLConnectionString } from "../utils/index.js";
 
 /**
@@ -282,5 +282,50 @@ export const mcpConfig = {
     schema: "schema",
   },
 };
+
+// Named connections — additional MySQL host/database pairs registered via
+// MYSQL_CONNECTION_{N}_NAME, MYSQL_CONNECTION_{N}_HOST, etc.
+// Each indexed group (N = 1, 2, ...) is parsed into a NamedConnection entry.
+// The env vars from the default block (MYSQL_HOST, MYSQL_PORT, …) are exposed
+// under the reserved "default" key.
+function parseNamedConnections(): NamedConnections {
+  const connections: NamedConnections = new Map();
+  for (const key in process.env) {
+    const match = key.match(/^MYSQL_CONNECTION_(\d+)_NAME$/);
+    if (!match) continue;
+    const idx = match[1];
+    const name = process.env[key]!.trim();
+    if (!name) continue;
+
+    const host = process.env[`MYSQL_CONNECTION_${idx}_HOST`] || "127.0.0.1";
+    const rawPort = process.env[`MYSQL_CONNECTION_${idx}_PORT`] || "3306";
+    const user = process.env[`MYSQL_CONNECTION_${idx}_USER`] || "root";
+    const password = process.env[`MYSQL_CONNECTION_${idx}_PASS`] ?? "";
+    const database = process.env[`MYSQL_CONNECTION_${idx}_DB`] || undefined;
+
+    connections.set(name, {
+      name,
+      host,
+      port: parseInt(rawPort, 10) || 3306,
+      user,
+      password,
+      database: database || undefined,
+    });
+  }
+  return connections;
+}
+
+export const namedConnections: NamedConnections = parseNamedConnections();
+
+/** Return a human-readable summary of all registered connections. */
+export function listConnections(): string {
+  const defaultHost = process.env.MYSQL_SOCKET_PATH || process.env.MYSQL_HOST || "127.0.0.1";
+  const lines: string[] = [];
+  lines.push(`- default → ${defaultHost}${mcpConfig.mysql.database ? ` (${mcpConfig.mysql.database})` : " (multi-DB mode)"}`);
+  for (const [name, cfg] of namedConnections) {
+    lines.push(`- ${name} → ${cfg.host}${cfg.database ? ` (${cfg.database})` : " (multi-DB mode)"}`);
+  }
+  return lines.join("\n");
+}
 
 export { readCACertificate, readSSLFile };

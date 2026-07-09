@@ -18,3 +18,17 @@ export interface ColumnRow {
   column_name: string;
   data_type: string;
 }
+
+export interface NamedConnection {
+  name: string;
+  host: string;
+  port: number;
+  user: string;
+  password: string;
+  database?: string;
+  socketPath?: string;
+  connectionLimit?: number;
+  connectTimeout?: number;
+}
+
+export type NamedConnections = Map<string, NamedConnection>;

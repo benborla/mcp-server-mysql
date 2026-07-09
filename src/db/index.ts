@@ -19,6 +19,7 @@ import * as mysql2 from "mysql2/promise";
 import { log } from "./../utils/index.js";
 import {
   mcpConfig as config,
+  namedConnections,
   MYSQL_DISABLE_READ_ONLY_TRANSACTIONS,
   ENABLE_PII_REDACTION,
   PII_EXTRA_COLUMNS,
@@ -54,29 +55,76 @@ function safeExit(code: number): void {
   }
 }
 
-// @INFO: Lazy load MySQL pool
-let poolPromise: Promise<mysql2.Pool>;
+// @INFO: Lazy load MySQL pool (multi-connection support)
+// Maps connection name → promise of pool
+const pools = new Map<string, Promise<mysql2.Pool>>();
 
-const getPool = (): Promise<mysql2.Pool> => {
-  if (!poolPromise) {
-    poolPromise = new Promise<mysql2.Pool>((resolve, reject) => {
+/** Resolve MySQL pool options for a named connection. */
+function resolveConnectionConfig(connectionName: string): mysql2.PoolOptions {
+  if (connectionName === "default") {
+    return config.mysql;
+  }
+
+  const named = namedConnections.get(connectionName);
+  if (!named) {
+    const available = ["default", ...Array.from(namedConnections.keys())].join(", ");
+    throw new Error(
+      `Unknown connection: "${connectionName}". Available connections: ${available}`
+    );
+  }
+
+  return {
+    host: named.host,
+    port: named.port,
+    user: named.user,
+    password: named.password,
+    database: named.database || undefined,
+    connectionLimit: named.connectionLimit || 10,
+    waitForConnections: true,
+    queueLimit: 100,
+    enableKeepAlive: true,
+    keepAliveInitialDelay: 0,
+    connectTimeout: named.connectTimeout || 10000,
+  };
+}
+
+const getPool = (connectionName: string = "default"): Promise<mysql2.Pool> => {
+  if (!pools.has(connectionName)) {
+    const poolPromise = new Promise<mysql2.Pool>((resolve, reject) => {
       try {
-        const pool = mysql2.createPool(config.mysql);
-        log("info", "MySQL pool created successfully");
+        const poolConfig = resolveConnectionConfig(connectionName);
+        const pool = mysql2.createPool(poolConfig);
+        log("info", `MySQL pool created for connection "${connectionName}"`);
         resolve(pool);
       } catch (error) {
-        log("error", "Error creating MySQL pool:", error);
+        log("error", `Error creating MySQL pool for "${connectionName}":`, error);
         reject(error);
       }
     });
+    pools.set(connectionName, poolPromise);
   }
-  return poolPromise;
+  return pools.get(connectionName)!;
 };
 
-async function executeQuery<T>(sql: string, params: string[] = []): Promise<T> {
+/** Close all connection pools. Used during graceful shutdown. */
+async function closeAllPools(): Promise<void> {
+  const names = Array.from(pools.keys());
+  for (const name of names) {
+    try {
+      const pool = await pools.get(name);
+      await pool?.end();
+      log("info", `Pool "${name}" closed`);
+    } catch (err) {
+      log("error", `Error closing pool "${name}":`, err);
+    }
+  }
+  pools.clear();
+}
+
+async function executeQuery<T>(sql: string, params: string[] = [], options?: { connection?: string }): Promise<T> {
   let connection;
   try {
-    const pool = await getPool();
+    const pool = await getPool(options?.connection);
     connection = await pool.getConnection();
     const result = await connection.query(sql, params);
     return (Array.isArray(result) ? result[0] : result) as T;
@@ -92,10 +140,10 @@ async function executeQuery<T>(sql: string, params: string[] = []): Promise<T> {
 }
 
 // @INFO: New function to handle write operations
-async function executeWriteQuery<T>(sql: string): Promise<T> {
+async function executeWriteQuery<T>(sql: string, options?: { connection?: string }): Promise<T> {
   let connection;
   try {
-    const pool = await getPool();
+    const pool = await getPool(options?.connection);
     connection = await pool.getConnection();
     log("error", "Write connection acquired");
 
@@ -197,7 +245,7 @@ async function executeWriteQuery<T>(sql: string): Promise<T> {
   }
 }
 
-async function executeReadOnlyQuery<T>(sql: string): Promise<T> {
+async function executeReadOnlyQuery<T>(sql: string, options?: { connection?: string }): Promise<T> {
   let connection;
   try {
     // PII redaction works hand-in-hand with explicit column projection: the
@@ -413,11 +461,11 @@ async function executeReadOnlyQuery<T>(sql: string): Promise<T> {
       (isDeleteOperation && isDeleteAllowedForSchema(schema)) ||
       (isDDLOperation && isDDLAllowedForSchema(schema))
     ) {
-      return executeWriteQuery(sql);
+      return executeWriteQuery(sql, options);
     }
 
     // For read-only operations, continue with the original logic
-    const pool = await getPool();
+    const pool = await getPool(options?.connection);
     connection = await pool.getConnection();
     log("error", "Read-only connection acquired");
 
@@ -542,5 +590,5 @@ export {
   getPool,
   executeWriteQuery,
   executeReadOnlyQuery,
-  poolPromise,
+  closeAllPools,
 };

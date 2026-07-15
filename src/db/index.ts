@@ -396,64 +396,66 @@ async function executeReadOnlyQuery<T>(sql: string, options?: { connection?: str
     }
 
     // Check schema-specific permissions
-    if (isInsertOperation && !isInsertAllowedForSchema(schema)) {
+    const connectionName = options?.connection || "default";
+
+    if (isInsertOperation && !isInsertAllowedForSchema(schema, connectionName)) {
       log(
         "error",
-        `INSERT operations are not allowed for schema '${schema || "default"}'. Configure SCHEMA_INSERT_PERMISSIONS.`,
+        `INSERT operations are not allowed for schema '${schema || "default"}' on connection '${connectionName}'. Configure SCHEMA_INSERT_PERMISSIONS or connection-level permissions.`,
       );
       return {
         content: [
           {
             type: "text",
-            text: `Error: INSERT operations are not allowed for schema '${schema || "default"}'. Ask the administrator to update SCHEMA_INSERT_PERMISSIONS.`,
+            text: `Error: INSERT operations are not allowed for schema '${schema || "default"}' on connection '${connectionName}'. Ask the administrator to update SCHEMA_INSERT_PERMISSIONS.`,
           },
         ],
         isError: true,
       } as T;
     }
 
-    if (isUpdateOperation && !isUpdateAllowedForSchema(schema)) {
+    if (isUpdateOperation && !isUpdateAllowedForSchema(schema, connectionName)) {
       log(
         "error",
-        `UPDATE operations are not allowed for schema '${schema || "default"}'. Configure SCHEMA_UPDATE_PERMISSIONS.`,
+        `UPDATE operations are not allowed for schema '${schema || "default"}' on connection '${connectionName}'. Configure SCHEMA_UPDATE_PERMISSIONS or connection-level permissions.`,
       );
       return {
         content: [
           {
             type: "text",
-            text: `Error: UPDATE operations are not allowed for schema '${schema || "default"}'. Ask the administrator to update SCHEMA_UPDATE_PERMISSIONS.`,
+            text: `Error: UPDATE operations are not allowed for schema '${schema || "default"}' on connection '${connectionName}'. Ask the administrator to update SCHEMA_UPDATE_PERMISSIONS.`,
           },
         ],
         isError: true,
       } as T;
     }
 
-    if (isDeleteOperation && !isDeleteAllowedForSchema(schema)) {
+    if (isDeleteOperation && !isDeleteAllowedForSchema(schema, connectionName)) {
       log(
         "error",
-        `DELETE operations are not allowed for schema '${schema || "default"}'. Configure SCHEMA_DELETE_PERMISSIONS.`,
+        `DELETE operations are not allowed for schema '${schema || "default"}' on connection '${connectionName}'. Configure SCHEMA_DELETE_PERMISSIONS or connection-level permissions.`,
       );
       return {
         content: [
           {
             type: "text",
-            text: `Error: DELETE operations are not allowed for schema '${schema || "default"}'. Ask the administrator to update SCHEMA_DELETE_PERMISSIONS.`,
+            text: `Error: DELETE operations are not allowed for schema '${schema || "default"}' on connection '${connectionName}'. Ask the administrator to update SCHEMA_DELETE_PERMISSIONS.`,
           },
         ],
         isError: true,
       } as T;
     }
 
-    if (isDDLOperation && !isDDLAllowedForSchema(schema)) {
+    if (isDDLOperation && !isDDLAllowedForSchema(schema, connectionName)) {
       log(
         "error",
-        `DDL operations are not allowed for schema '${schema || "default"}'. Configure SCHEMA_DDL_PERMISSIONS.`,
+        `DDL operations are not allowed for schema '${schema || "default"}' on connection '${connectionName}'. Configure SCHEMA_DDL_PERMISSIONS or connection-level permissions.`,
       );
       return {
         content: [
           {
             type: "text",
-            text: `Error: DDL operations are not allowed for schema '${schema || "default"}'. Ask the administrator to update SCHEMA_DDL_PERMISSIONS.`,
+            text: `Error: DDL operations are not allowed for schema '${schema || "default"}' on connection '${connectionName}'. Ask the administrator to update SCHEMA_DDL_PERMISSIONS.`,
           },
         ],
         isError: true,
@@ -462,10 +464,10 @@ async function executeReadOnlyQuery<T>(sql: string, options?: { connection?: str
 
     // For write operations that are allowed, use executeWriteQuery
     if (
-      (isInsertOperation && isInsertAllowedForSchema(schema)) ||
-      (isUpdateOperation && isUpdateAllowedForSchema(schema)) ||
-      (isDeleteOperation && isDeleteAllowedForSchema(schema)) ||
-      (isDDLOperation && isDDLAllowedForSchema(schema))
+      (isInsertOperation && isInsertAllowedForSchema(schema, connectionName)) ||
+      (isUpdateOperation && isUpdateAllowedForSchema(schema, connectionName)) ||
+      (isDeleteOperation && isDeleteAllowedForSchema(schema, connectionName)) ||
+      (isDDLOperation && isDDLAllowedForSchema(schema, connectionName))
     ) {
       return executeWriteQuery(sql, options);
     }

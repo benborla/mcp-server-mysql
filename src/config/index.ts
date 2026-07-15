@@ -303,6 +303,11 @@ function parseNamedConnections(): NamedConnections {
     const password = process.env[`MYSQL_CONNECTION_${idx}_PASS`] ?? "";
     const database = process.env[`MYSQL_CONNECTION_${idx}_DB`] || undefined;
 
+    const allowInsert = process.env[`MYSQL_CONNECTION_${idx}_ALLOW_INSERT_OPERATION`];
+    const allowUpdate = process.env[`MYSQL_CONNECTION_${idx}_ALLOW_UPDATE_OPERATION`];
+    const allowDelete = process.env[`MYSQL_CONNECTION_${idx}_ALLOW_DELETE_OPERATION`];
+    const allowDDL = process.env[`MYSQL_CONNECTION_${idx}_ALLOW_DDL_OPERATION`];
+
     connections.set(name, {
       name,
       host,
@@ -310,6 +315,10 @@ function parseNamedConnections(): NamedConnections {
       user,
       password,
       database: database || undefined,
+      allowInsert: allowInsert !== undefined ? allowInsert === "true" : undefined,
+      allowUpdate: allowUpdate !== undefined ? allowUpdate === "true" : undefined,
+      allowDelete: allowDelete !== undefined ? allowDelete === "true" : undefined,
+      allowDDL: allowDDL !== undefined ? allowDDL === "true" : undefined,
     });
   }
   return connections;
@@ -326,6 +335,43 @@ export function listConnections(): string {
     lines.push(`- ${name} → ${cfg.host}${cfg.database ? ` (${cfg.database})` : " (multi-DB mode)"}`);
   }
   return lines.join("\n");
+}
+
+/**
+ * Resolve the effective write permission for a connection. Named connections
+ * may override the global ALLOW_*_OPERATION flag; when they don't, the global
+ * flag is used as the fallback.
+ */
+export function resolveInsertPermission(connectionName: string): boolean {
+  if (connectionName !== "default") {
+    const conn = namedConnections.get(connectionName);
+    if (conn?.allowInsert !== undefined) return conn.allowInsert;
+  }
+  return ALLOW_INSERT_OPERATION;
+}
+
+export function resolveUpdatePermission(connectionName: string): boolean {
+  if (connectionName !== "default") {
+    const conn = namedConnections.get(connectionName);
+    if (conn?.allowUpdate !== undefined) return conn.allowUpdate;
+  }
+  return ALLOW_UPDATE_OPERATION;
+}
+
+export function resolveDeletePermission(connectionName: string): boolean {
+  if (connectionName !== "default") {
+    const conn = namedConnections.get(connectionName);
+    if (conn?.allowDelete !== undefined) return conn.allowDelete;
+  }
+  return ALLOW_DELETE_OPERATION;
+}
+
+export function resolveDDLPermission(connectionName: string): boolean {
+  if (connectionName !== "default") {
+    const conn = namedConnections.get(connectionName);
+    if (conn?.allowDDL !== undefined) return conn.allowDDL;
+  }
+  return ALLOW_DDL_OPERATION;
 }
 
 export { readCACertificate, readSSLFile };

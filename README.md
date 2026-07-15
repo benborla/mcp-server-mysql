@@ -123,6 +123,20 @@ MYSQL_CONNECTION_2_PASS=readonly_pass
 MYSQL_CONNECTION_2_DB=reporting
 ```
 
+### Per-Connection Write Permissions
+
+By default, the global `ALLOW_*_OPERATION` flags apply to every connection. To restrict a specific connection to read-only, set the per-connection override flags:
+
+```bash
+# Make the "reporting" connection read-only
+MYSQL_CONNECTION_2_ALLOW_INSERT_OPERATION=false
+MYSQL_CONNECTION_2_ALLOW_UPDATE_OPERATION=false
+MYSQL_CONNECTION_2_ALLOW_DELETE_OPERATION=false
+MYSQL_CONNECTION_2_ALLOW_DDL_OPERATION=false
+```
+
+When a per-connection flag is not set, the global `ALLOW_*_OPERATION` value is used as the fallback. This lets you, for example, keep the default connection writable while marking production replicas as read-only.
+
 ### Usage
 
 Pass the `connection` parameter when calling the `mysql_query` tool:

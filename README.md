@@ -1,5 +1,7 @@
 # MCP Server for MySQL
 
+[![MCP Toplist](https://mcptoplist.com/badge/glama%2Fbenborla%2Fmcp-server-mysql.svg)](https://mcptoplist.com/server/glama%2Fbenborla%2Fmcp-server-mysql)
+
 [![Trust Score](https://archestra.ai/mcp-catalog/api/badge/quality/benborla/mcp-server-mysql)](https://archestra.ai/mcp-catalog/benborla__mcp-server-mysql)
 
 ## Sponsor — Bloome

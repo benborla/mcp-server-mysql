@@ -86,9 +86,7 @@ See [PII-REDACTION.md](./PII-REDACTION.md) for full documentation.
 
 | Variable | Default | Description |
 |---|---|---|
-| `MYSQL_ENABLE_LOGGING` | `false` | Enable query logging |
-| `MYSQL_LOG_LEVEL` | `info` | Log level |
-| `MYSQL_METRICS_ENABLED` | `false` | Enable performance metrics |
+| `ENABLE_LOGGING` | `false` | Enable diagnostic logging (startup, connections, errors). Accepts `true` or `1` |
 
 ## Remote MCP
 
@@ -121,7 +119,7 @@ See [PII-REDACTION.md](./PII-REDACTION.md) for full documentation.
         "ALLOW_INSERT_OPERATION": "false",
         "ALLOW_UPDATE_OPERATION": "false",
         "ALLOW_DELETE_OPERATION": "false",
-        "MYSQL_ENABLE_LOGGING": "false"
+        "ENABLE_LOGGING": "false"
       }
     }
   }

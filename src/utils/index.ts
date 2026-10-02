@@ -10,13 +10,13 @@ export function log(type: LogType = "info", ...args: any[]): void {
 
   switch (type) {
     case "info":
-      console.info(...args);
+      console.error(...args);
       break;
     case "error":
       console.error(...args);
       break;
     default:
-      console.log(...args);
+      console.error(...args);
   }
 }
 

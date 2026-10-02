@@ -1,6 +1,6 @@
 import * as dotenv from "dotenv";
 import * as fs from "fs";
-import { SchemaPermissions } from "../types/index.js";
+import { SchemaPermissions, NamedConnection, NamedConnections } from "../types/index.js";
 import { parseSchemaPermissions, parseMySQLConnectionString } from "../utils/index.js";
 
 /**
@@ -282,5 +282,96 @@ export const mcpConfig = {
     schema: "schema",
   },
 };
+
+// Named connections — additional MySQL host/database pairs registered via
+// MYSQL_CONNECTION_{N}_NAME, MYSQL_CONNECTION_{N}_HOST, etc.
+// Each indexed group (N = 1, 2, ...) is parsed into a NamedConnection entry.
+// The env vars from the default block (MYSQL_HOST, MYSQL_PORT, …) are exposed
+// under the reserved "default" key.
+function parseNamedConnections(): NamedConnections {
+  const connections: NamedConnections = new Map();
+  for (const key in process.env) {
+    const match = key.match(/^MYSQL_CONNECTION_(\d+)_NAME$/);
+    if (!match) continue;
+    const idx = match[1];
+    const name = process.env[key]!.trim();
+    if (!name) continue;
+
+    const host = process.env[`MYSQL_CONNECTION_${idx}_HOST`] || "127.0.0.1";
+    const rawPort = process.env[`MYSQL_CONNECTION_${idx}_PORT`] || "3306";
+    const user = process.env[`MYSQL_CONNECTION_${idx}_USER`] || "root";
+    const password = process.env[`MYSQL_CONNECTION_${idx}_PASS`] ?? "";
+    const database = process.env[`MYSQL_CONNECTION_${idx}_DB`] || undefined;
+
+    const allowInsert = process.env[`MYSQL_CONNECTION_${idx}_ALLOW_INSERT_OPERATION`];
+    const allowUpdate = process.env[`MYSQL_CONNECTION_${idx}_ALLOW_UPDATE_OPERATION`];
+    const allowDelete = process.env[`MYSQL_CONNECTION_${idx}_ALLOW_DELETE_OPERATION`];
+    const allowDDL = process.env[`MYSQL_CONNECTION_${idx}_ALLOW_DDL_OPERATION`];
+
+    connections.set(name, {
+      name,
+      host,
+      port: parseInt(rawPort, 10) || 3306,
+      user,
+      password,
+      database: database || undefined,
+      allowInsert: allowInsert !== undefined ? allowInsert === "true" : undefined,
+      allowUpdate: allowUpdate !== undefined ? allowUpdate === "true" : undefined,
+      allowDelete: allowDelete !== undefined ? allowDelete === "true" : undefined,
+      allowDDL: allowDDL !== undefined ? allowDDL === "true" : undefined,
+    });
+  }
+  return connections;
+}
+
+export const namedConnections: NamedConnections = parseNamedConnections();
+
+/** Return a human-readable summary of all registered connections. */
+export function listConnections(): string {
+  const defaultHost = process.env.MYSQL_SOCKET_PATH || process.env.MYSQL_HOST || "127.0.0.1";
+  const lines: string[] = [];
+  lines.push(`- default → ${defaultHost}${mcpConfig.mysql.database ? ` (${mcpConfig.mysql.database})` : " (multi-DB mode)"}`);
+  for (const [name, cfg] of namedConnections) {
+    lines.push(`- ${name} → ${cfg.host}${cfg.database ? ` (${cfg.database})` : " (multi-DB mode)"}`);
+  }
+  return lines.join("\n");
+}
+
+/**
+ * Resolve the effective write permission for a connection. Named connections
+ * may override the global ALLOW_*_OPERATION flag; when they don't, the global
+ * flag is used as the fallback.
+ */
+export function resolveInsertPermission(connectionName: string): boolean {
+  if (connectionName !== "default") {
+    const conn = namedConnections.get(connectionName);
+    if (conn?.allowInsert !== undefined) return conn.allowInsert;
+  }
+  return ALLOW_INSERT_OPERATION;
+}
+
+export function resolveUpdatePermission(connectionName: string): boolean {
+  if (connectionName !== "default") {
+    const conn = namedConnections.get(connectionName);
+    if (conn?.allowUpdate !== undefined) return conn.allowUpdate;
+  }
+  return ALLOW_UPDATE_OPERATION;
+}
+
+export function resolveDeletePermission(connectionName: string): boolean {
+  if (connectionName !== "default") {
+    const conn = namedConnections.get(connectionName);
+    if (conn?.allowDelete !== undefined) return conn.allowDelete;
+  }
+  return ALLOW_DELETE_OPERATION;
+}
+
+export function resolveDDLPermission(connectionName: string): boolean {
+  if (connectionName !== "default") {
+    const conn = namedConnections.get(connectionName);
+    if (conn?.allowDDL !== undefined) return conn.allowDDL;
+  }
+  return ALLOW_DDL_OPERATION;
+}
 
 export { readCACertificate, readSSLFile };

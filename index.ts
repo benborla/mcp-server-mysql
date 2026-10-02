@@ -30,6 +30,8 @@ import {
   ENABLE_PII_REDACTION,
   PII_EXTRA_COLUMNS,
   PII_EXTRA_COLUMN_PATTERNS,
+  namedConnections,
+  listConnections,
 } from "./src/config/index.js";
 import { isPIIColumn, DEFAULT_PII_COLUMNS } from "./src/security/redact.js";
 import {
@@ -37,7 +39,7 @@ import {
   getPool,
   executeQuery,
   executeReadOnlyQuery,
-  poolPromise,
+  closeAllPools,
 } from "./src/db/index.js";
 
 import express, { Request, Response } from "express";
@@ -47,7 +49,7 @@ import { realpathSync } from 'fs';
 
 log("info", `Starting MySQL MCP server v${version}...`);
 
-// Update tool description to include multi-DB mode and schema-specific permissions
+// Update tool description to include multi-DB mode, schema-specific permissions, and available connections
 const toolVersion = `MySQL MCP Server [v${process.env.npm_package_version}]`;
 let toolDescription = `[${toolVersion}] Run SQL queries against MySQL database`;
 
@@ -95,6 +97,11 @@ if (
   // Only read operations are allowed
   toolDescription += " (READ-ONLY)";
 }
+
+// List available connections in tool description
+const availableConnections = ["default", ...Array.from(namedConnections.keys())];
+toolDescription += ` | Connections: ${availableConnections.join(", ")}`;
+toolDescription += " | Use SHOW CONNECTIONS to list details";
 
 // Determine if we're in read-only mode (no write operations enabled)
 const isReadOnly = !(
@@ -164,7 +171,12 @@ export default function createMcpServer({
               properties: {
                 sql: {
                   type: "string",
-                  description: "The SQL query to execute",
+                  description: "The SQL query to execute. Use SHOW CONNECTIONS to list available connections.",
+                },
+                connection: {
+                  type: "string",
+                  description: `Connection name to use. Available: ${availableConnections.join(", ")}. Default: "default".`,
+                  default: "default",
                 },
               },
               required: ["sql"],
@@ -316,7 +328,22 @@ export default function createMcpServer({
       }
 
       const sql = request.params.arguments?.sql as string;
-      return await executeReadOnlyQuery(sql);
+      const connectionName = (request.params.arguments?.connection as string) || "default";
+
+      // Handle SHOW CONNECTIONS — return list of registered connections
+      if (sql.trim().toUpperCase().replace(/;\s*$/, "") === "SHOW CONNECTIONS") {
+        return {
+          content: [
+            {
+              type: "text",
+              text: listConnections(),
+            },
+          ],
+          isError: false,
+        };
+      }
+
+      return await executeReadOnlyQuery(sql, { connection: connectionName });
     } catch (err) {
       const error = err as Error;
       log("error", "Error in CallToolRequest handler:", error);
@@ -344,7 +371,12 @@ export default function createMcpServer({
             properties: {
               sql: {
                 type: "string",
-                description: "The SQL query to execute",
+                description: "The SQL query to execute. Use SHOW CONNECTIONS to list available connections.",
+              },
+              connection: {
+                type: "string",
+                description: `Connection name to use. Available: ${availableConnections.join(", ")}. Default: "default".`,
+                default: "default",
               },
             },
             required: ["sql"],
@@ -387,13 +419,9 @@ export default function createMcpServer({
   const shutdown = async (signal: string): Promise<void> => {
     log("error", `Received ${signal}. Shutting down...`);
     try {
-      // Only attempt to close the pool if it was created
-      if (poolPromise) {
-        const pool = await poolPromise;
-        await pool.end();
-      }
+      await closeAllPools();
     } catch (err) {
-      log("error", "Error closing pool:", err);
+      log("error", "Error closing pools:", err);
       throw err;
     }
   };

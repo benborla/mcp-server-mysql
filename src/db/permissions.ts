@@ -7,43 +7,47 @@ import {
   SCHEMA_DDL_PERMISSIONS,
   SCHEMA_INSERT_PERMISSIONS,
   SCHEMA_UPDATE_PERMISSIONS,
+  resolveInsertPermission,
+  resolveUpdatePermission,
+  resolveDeletePermission,
+  resolveDDLPermission,
 } from "../config/index.js";
 
 // Schema permission checking functions
-function isInsertAllowedForSchema(schema: string | null): boolean {
+function isInsertAllowedForSchema(schema: string | null, connectionName: string = "default"): boolean {
   if (!schema) {
-    return ALLOW_INSERT_OPERATION;
+    return resolveInsertPermission(connectionName);
   }
   return schema in SCHEMA_INSERT_PERMISSIONS
     ? SCHEMA_INSERT_PERMISSIONS[schema]
-    : ALLOW_INSERT_OPERATION;
+    : resolveInsertPermission(connectionName);
 }
 
-function isUpdateAllowedForSchema(schema: string | null): boolean {
+function isUpdateAllowedForSchema(schema: string | null, connectionName: string = "default"): boolean {
   if (!schema) {
-    return ALLOW_UPDATE_OPERATION;
+    return resolveUpdatePermission(connectionName);
   }
   return schema in SCHEMA_UPDATE_PERMISSIONS
     ? SCHEMA_UPDATE_PERMISSIONS[schema]
-    : ALLOW_UPDATE_OPERATION;
+    : resolveUpdatePermission(connectionName);
 }
 
-function isDeleteAllowedForSchema(schema: string | null): boolean {
+function isDeleteAllowedForSchema(schema: string | null, connectionName: string = "default"): boolean {
   if (!schema) {
-    return ALLOW_DELETE_OPERATION;
+    return resolveDeletePermission(connectionName);
   }
   return schema in SCHEMA_DELETE_PERMISSIONS
     ? SCHEMA_DELETE_PERMISSIONS[schema]
-    : ALLOW_DELETE_OPERATION;
+    : resolveDeletePermission(connectionName);
 }
 
-function isDDLAllowedForSchema(schema: string | null): boolean {
+function isDDLAllowedForSchema(schema: string | null, connectionName: string = "default"): boolean {
   if (!schema) {
-    return ALLOW_DDL_OPERATION;
+    return resolveDDLPermission(connectionName);
   }
   return schema in SCHEMA_DDL_PERMISSIONS
     ? SCHEMA_DDL_PERMISSIONS[schema]
-    : ALLOW_DDL_OPERATION;
+    : resolveDDLPermission(connectionName);
 }
 
 export {

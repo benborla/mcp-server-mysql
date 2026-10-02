@@ -19,6 +19,7 @@ import * as mysql2 from "mysql2/promise";
 import { log } from "./../utils/index.js";
 import {
   mcpConfig as config,
+  namedConnections,
   MYSQL_DISABLE_READ_ONLY_TRANSACTIONS,
   ENABLE_PII_REDACTION,
   PII_EXTRA_COLUMNS,
@@ -54,29 +55,76 @@ function safeExit(code: number): void {
   }
 }
 
-// @INFO: Lazy load MySQL pool
-let poolPromise: Promise<mysql2.Pool>;
+// @INFO: Lazy load MySQL pool (multi-connection support)
+// Maps connection name → promise of pool
+const pools = new Map<string, Promise<mysql2.Pool>>();
 
-const getPool = (): Promise<mysql2.Pool> => {
-  if (!poolPromise) {
-    poolPromise = new Promise<mysql2.Pool>((resolve, reject) => {
+/** Resolve MySQL pool options for a named connection. */
+function resolveConnectionConfig(connectionName: string): mysql2.PoolOptions {
+  if (connectionName === "default") {
+    return config.mysql;
+  }
+
+  const named = namedConnections.get(connectionName);
+  if (!named) {
+    const available = ["default", ...Array.from(namedConnections.keys())].join(", ");
+    throw new Error(
+      `Unknown connection: "${connectionName}". Available connections: ${available}`
+    );
+  }
+
+  return {
+    host: named.host,
+    port: named.port,
+    user: named.user,
+    password: named.password,
+    database: named.database || undefined,
+    connectionLimit: named.connectionLimit || 10,
+    waitForConnections: true,
+    queueLimit: 100,
+    enableKeepAlive: true,
+    keepAliveInitialDelay: 0,
+    connectTimeout: named.connectTimeout || 10000,
+  };
+}
+
+const getPool = (connectionName: string = "default"): Promise<mysql2.Pool> => {
+  if (!pools.has(connectionName)) {
+    const poolPromise = new Promise<mysql2.Pool>((resolve, reject) => {
       try {
-        const pool = mysql2.createPool(config.mysql);
-        log("info", "MySQL pool created successfully");
+        const poolConfig = resolveConnectionConfig(connectionName);
+        const pool = mysql2.createPool(poolConfig);
+        log("info", `MySQL pool created for connection "${connectionName}"`);
         resolve(pool);
       } catch (error) {
-        log("error", "Error creating MySQL pool:", error);
+        log("error", `Error creating MySQL pool for "${connectionName}":`, error);
         reject(error);
       }
     });
+    pools.set(connectionName, poolPromise);
   }
-  return poolPromise;
+  return pools.get(connectionName)!;
 };
 
-async function executeQuery<T>(sql: string, params: string[] = []): Promise<T> {
+/** Close all connection pools. Used during graceful shutdown. */
+async function closeAllPools(): Promise<void> {
+  const names = Array.from(pools.keys());
+  for (const name of names) {
+    try {
+      const pool = await pools.get(name);
+      await pool?.end();
+      log("info", `Pool "${name}" closed`);
+    } catch (err) {
+      log("error", `Error closing pool "${name}":`, err);
+    }
+  }
+  pools.clear();
+}
+
+async function executeQuery<T>(sql: string, params: string[] = [], options?: { connection?: string }): Promise<T> {
   let connection;
   try {
-    const pool = await getPool();
+    const pool = await getPool(options?.connection);
     connection = await pool.getConnection();
     const result = await connection.query(sql, params);
     return (Array.isArray(result) ? result[0] : result) as T;
@@ -92,10 +140,10 @@ async function executeQuery<T>(sql: string, params: string[] = []): Promise<T> {
 }
 
 // @INFO: New function to handle write operations
-async function executeWriteQuery<T>(sql: string): Promise<T> {
+async function executeWriteQuery<T>(sql: string, options?: { connection?: string }): Promise<T> {
   let connection;
   try {
-    const pool = await getPool();
+    const pool = await getPool(options?.connection);
     connection = await pool.getConnection();
     log("error", "Write connection acquired");
 
@@ -197,7 +245,7 @@ async function executeWriteQuery<T>(sql: string): Promise<T> {
   }
 }
 
-async function executeReadOnlyQuery<T>(sql: string): Promise<T> {
+async function executeReadOnlyQuery<T>(sql: string, options?: { connection?: string }): Promise<T> {
   let connection;
   try {
     // PII redaction works hand-in-hand with explicit column projection: the
@@ -227,31 +275,36 @@ async function executeReadOnlyQuery<T>(sql: string): Promise<T> {
       } as T;
     }
 
-    // Introspection guard. Three sub-policies under ENABLE_PII_REDACTION:
-    //   - filterable (SHOW COLUMNS / DESCRIBE / SHOW INDEX): execute, then
-    //     drop PII rows from the result.
-    //   - passthrough (SHOW TABLES / SHOW DATABASES / charset / collation /
-    //     etc.): execute unchanged. These expose only schema topology (table
-    //     and database names), no column-level PII.
-    //   - rejected (SHOW CREATE TABLE, information_schema.*, mysql.*, plus
-    //     any unrecognised SHOW): blocked, because we can't safely filter
-    //     them and they can leak column names verbatim.
-    // PII_ALLOW_INTROSPECTION=true bypasses the guard entirely.
-    // PII_BLOCK_INTROSPECTION=true restores the old hard-block behaviour for
-    // every introspection kind, including filterable and passthrough.
+    // Introspection detection — always runs so MySQL-specific SHOW statements
+    // (e.g. SHOW TABLES FROM db, SHOW DATABASES) skip getQueryTypes() and its
+    // node-sql-parser, which does not understand MySQL SHOW syntax.
+    // PII-specific blocking and row filtering is applied below when enabled.
     let introspectionFilterKind: FilterableIntrospectionKind | null = null;
     let isIntrospectionPassThrough = false;
-    if (ENABLE_PII_REDACTION && !PII_ALLOW_INTROSPECTION) {
-      const intro = isIntrospectionQuery(sql);
-      if (intro.kind) {
-        const filterable: FilterableIntrospectionKind | null =
-          intro.kind === "show_columns" ||
-          intro.kind === "describe" ||
-          intro.kind === "show_index"
-            ? intro.kind
-            : null;
-        const passthrough = intro.kind === "show_passthrough";
 
+    const intro = isIntrospectionQuery(sql);
+    if (intro.kind) {
+      const filterable: FilterableIntrospectionKind | null =
+        intro.kind === "show_columns" ||
+        intro.kind === "describe" ||
+        intro.kind === "show_index"
+          ? intro.kind
+          : null;
+      const passthrough = intro.kind === "show_passthrough";
+
+      // PII-specific introspection guard:
+      //   - filterable (SHOW COLUMNS / DESCRIBE / SHOW INDEX): execute, then
+      //     drop PII rows from the result.
+      //   - passthrough (SHOW TABLES / SHOW DATABASES / charset / collation /
+      //     etc.): execute unchanged. These expose only schema topology (table
+      //     and database names), no column-level PII.
+      //   - rejected (SHOW CREATE TABLE, information_schema.*, mysql.*, plus
+      //     any unrecognised SHOW): blocked, because we can't safely filter
+      //     them and they can leak column names verbatim.
+      // PII_ALLOW_INTROSPECTION=true bypasses the guard entirely.
+      // PII_BLOCK_INTROSPECTION=true restores the old hard-block behaviour for
+      // every introspection kind, including filterable and passthrough.
+      if (ENABLE_PII_REDACTION && !PII_ALLOW_INTROSPECTION) {
         if (PII_BLOCK_INTROSPECTION || (!filterable && !passthrough)) {
           log(
             "error",
@@ -271,16 +324,17 @@ async function executeReadOnlyQuery<T>(sql: string): Promise<T> {
             isError: true,
           } as T;
         }
-        if (filterable) {
-          // Filterable kind: allow through; we'll drop PII rows from the
-          // result before returning it.
-          introspectionFilterKind = filterable;
-        } else if (passthrough) {
-          // Passthrough kind: nothing to set up — just skip the queryTypes /
-          // permissions block below (the parser doesn't model these
-          // statements) and let the executor run the SQL as-is.
-          isIntrospectionPassThrough = true;
-        }
+      }
+
+      if (filterable) {
+        // Filterable kind: allow through; we'll drop PII rows from the
+        // result before returning it.
+        introspectionFilterKind = filterable;
+      } else if (passthrough) {
+        // Passthrough kind: nothing to set up — just skip the queryTypes /
+        // permissions block below (the parser doesn't model these
+        // statements) and let the executor run the SQL as-is.
+        isIntrospectionPassThrough = true;
       }
     }
 
@@ -342,64 +396,66 @@ async function executeReadOnlyQuery<T>(sql: string): Promise<T> {
     }
 
     // Check schema-specific permissions
-    if (isInsertOperation && !isInsertAllowedForSchema(schema)) {
+    const connectionName = options?.connection || "default";
+
+    if (isInsertOperation && !isInsertAllowedForSchema(schema, connectionName)) {
       log(
         "error",
-        `INSERT operations are not allowed for schema '${schema || "default"}'. Configure SCHEMA_INSERT_PERMISSIONS.`,
+        `INSERT operations are not allowed for schema '${schema || "default"}' on connection '${connectionName}'. Configure SCHEMA_INSERT_PERMISSIONS or connection-level permissions.`,
       );
       return {
         content: [
           {
             type: "text",
-            text: `Error: INSERT operations are not allowed for schema '${schema || "default"}'. Ask the administrator to update SCHEMA_INSERT_PERMISSIONS.`,
+            text: `Error: INSERT operations are not allowed for schema '${schema || "default"}' on connection '${connectionName}'. Ask the administrator to update SCHEMA_INSERT_PERMISSIONS.`,
           },
         ],
         isError: true,
       } as T;
     }
 
-    if (isUpdateOperation && !isUpdateAllowedForSchema(schema)) {
+    if (isUpdateOperation && !isUpdateAllowedForSchema(schema, connectionName)) {
       log(
         "error",
-        `UPDATE operations are not allowed for schema '${schema || "default"}'. Configure SCHEMA_UPDATE_PERMISSIONS.`,
+        `UPDATE operations are not allowed for schema '${schema || "default"}' on connection '${connectionName}'. Configure SCHEMA_UPDATE_PERMISSIONS or connection-level permissions.`,
       );
       return {
         content: [
           {
             type: "text",
-            text: `Error: UPDATE operations are not allowed for schema '${schema || "default"}'. Ask the administrator to update SCHEMA_UPDATE_PERMISSIONS.`,
+            text: `Error: UPDATE operations are not allowed for schema '${schema || "default"}' on connection '${connectionName}'. Ask the administrator to update SCHEMA_UPDATE_PERMISSIONS.`,
           },
         ],
         isError: true,
       } as T;
     }
 
-    if (isDeleteOperation && !isDeleteAllowedForSchema(schema)) {
+    if (isDeleteOperation && !isDeleteAllowedForSchema(schema, connectionName)) {
       log(
         "error",
-        `DELETE operations are not allowed for schema '${schema || "default"}'. Configure SCHEMA_DELETE_PERMISSIONS.`,
+        `DELETE operations are not allowed for schema '${schema || "default"}' on connection '${connectionName}'. Configure SCHEMA_DELETE_PERMISSIONS or connection-level permissions.`,
       );
       return {
         content: [
           {
             type: "text",
-            text: `Error: DELETE operations are not allowed for schema '${schema || "default"}'. Ask the administrator to update SCHEMA_DELETE_PERMISSIONS.`,
+            text: `Error: DELETE operations are not allowed for schema '${schema || "default"}' on connection '${connectionName}'. Ask the administrator to update SCHEMA_DELETE_PERMISSIONS.`,
           },
         ],
         isError: true,
       } as T;
     }
 
-    if (isDDLOperation && !isDDLAllowedForSchema(schema)) {
+    if (isDDLOperation && !isDDLAllowedForSchema(schema, connectionName)) {
       log(
         "error",
-        `DDL operations are not allowed for schema '${schema || "default"}'. Configure SCHEMA_DDL_PERMISSIONS.`,
+        `DDL operations are not allowed for schema '${schema || "default"}' on connection '${connectionName}'. Configure SCHEMA_DDL_PERMISSIONS or connection-level permissions.`,
       );
       return {
         content: [
           {
             type: "text",
-            text: `Error: DDL operations are not allowed for schema '${schema || "default"}'. Ask the administrator to update SCHEMA_DDL_PERMISSIONS.`,
+            text: `Error: DDL operations are not allowed for schema '${schema || "default"}' on connection '${connectionName}'. Ask the administrator to update SCHEMA_DDL_PERMISSIONS.`,
           },
         ],
         isError: true,
@@ -408,16 +464,16 @@ async function executeReadOnlyQuery<T>(sql: string): Promise<T> {
 
     // For write operations that are allowed, use executeWriteQuery
     if (
-      (isInsertOperation && isInsertAllowedForSchema(schema)) ||
-      (isUpdateOperation && isUpdateAllowedForSchema(schema)) ||
-      (isDeleteOperation && isDeleteAllowedForSchema(schema)) ||
-      (isDDLOperation && isDDLAllowedForSchema(schema))
+      (isInsertOperation && isInsertAllowedForSchema(schema, connectionName)) ||
+      (isUpdateOperation && isUpdateAllowedForSchema(schema, connectionName)) ||
+      (isDeleteOperation && isDeleteAllowedForSchema(schema, connectionName)) ||
+      (isDDLOperation && isDDLAllowedForSchema(schema, connectionName))
     ) {
-      return executeWriteQuery(sql);
+      return executeWriteQuery(sql, options);
     }
 
     // For read-only operations, continue with the original logic
-    const pool = await getPool();
+    const pool = await getPool(options?.connection);
     connection = await pool.getConnection();
     log("error", "Read-only connection acquired");
 
@@ -542,5 +598,5 @@ export {
   getPool,
   executeWriteQuery,
   executeReadOnlyQuery,
-  poolPromise,
+  closeAllPools,
 };

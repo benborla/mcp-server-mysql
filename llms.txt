@@ -1,0 +1,21 @@
+# mcp-server-mysql
+
+> A Model Context Protocol server that gives LLMs access to MySQL databases, letting them inspect schemas, run queries, and optionally write data.
+
+Node.js v20+ with MySQL 5.7+ (8.0+ recommended). Install via Claude Code, Claude Desktop, Smithery, Cursor, Codex, or from a local repo; write operations are disabled by default and enabled with ALLOW_INSERT_OPERATION, ALLOW_UPDATE_OPERATION, and ALLOW_DELETE_OPERATION env flags. Main tool is mysql_query for SQL execution, with a mysql://tables resource listing tables and column metadata; supports SSH tunnels, multi-database mode, PII redaction, remote HTTP mode with bearer token auth, and SSL/TLS.
+
+## Docs
+
+- [mcp-server-mysql README](https://raw.githubusercontent.com/benborla/mcp-server-mysql/main/README.md): MCP server giving Claude access to MySQL: features, requirements, quick install, and write-operation flags.
+- [Installation Guide](https://raw.githubusercontent.com/benborla/mcp-server-mysql/main/docs/INSTALLATION.md): Installing via Smithery, Cursor, Codex CLI, and Claude Code, plus multi-DB, remote mode, and local repository setup.
+- [Configuration](https://raw.githubusercontent.com/benborla/mcp-server-mysql/main/docs/CONFIGURATION.md): Connection strings, performance, security and schema-specific permissions, PII redaction, timezone, monitoring, and remote MCP settings.
+- [Troubleshooting](https://raw.githubusercontent.com/benborla/mcp-server-mysql/main/docs/TROUBLESHOOTING.md): Fixing connection, performance, security, authentication, and Claude Code issues, including path resolution and missing dotenv errors.
+- [Project Database Setup Guide with MCP Server, SSH Tunnels, and Hooks](https://raw.githubusercontent.com/benborla/mcp-server-mysql/main/PROJECT_SETUP_GUIDE.md): Setting up SSH tunnel scripts, MCP configuration, and hooks for per-project database access with Claude Code.
+- [TODO](https://raw.githubusercontent.com/benborla/mcp-server-mysql/main/TODO.md): Planned work: replacing configuration with a connection string format.
+- [PII Redaction](https://raw.githubusercontent.com/benborla/mcp-server-mysql/main/docs/PII-REDACTION.md): Enabling PII masking in read-only query results, detection heuristics, extra column configuration, and hardening guards.
+- [Testing](https://raw.githubusercontent.com/benborla/mcp-server-mysql/main/docs/TESTING.md): Setting up a test database and .env.test, running tests, and running evals via MCP client.
+
+## Optional
+
+- [Changelog](https://raw.githubusercontent.com/benborla/mcp-server-mysql/main/CHANGELOG.md): Recent changes including PII redaction environment variables and planned features like prepared statement support.
+- [Release Notes](https://raw.githubusercontent.com/benborla/mcp-server-mysql/main/RELEASE.md): Version 2.0.0 highlights: multi-database support, enhanced logging, query case handling, and breaking changes.

@@ -62,6 +62,28 @@ const getPool = (): Promise<mysql2.Pool> => {
     poolPromise = new Promise<mysql2.Pool>((resolve, reject) => {
       try {
         const pool = mysql2.createPool(config.mysql);
+        // Defensive: a pool-level 'error' event must never surface as an
+        // unhandled EventEmitter 'error' (which would crash the process via
+        // uncaughtException and make MCP clients reconnect-loop the server).
+        // mysql2 3.x routes connection errors through promise rejections, but
+        // guard both the promise pool and the underlying core pool anyway.
+        // Log only — the pool keeps serving once the database is reachable.
+        const onPoolError = (err: NodeJS.ErrnoException) => {
+          const message = err instanceof Error ? err.message : String(err);
+          log("error", "MySQL pool error:", message);
+          console.error(`MySQL pool error (continuing): ${message}`);
+        };
+        // mysql2's typings expose only a subset of EventEmitter events for
+        // these objects, although both are EventEmitters at runtime.
+        const poolEmitters = [pool, pool.pool] as unknown as (
+          | NodeJS.EventEmitter
+          | undefined
+        )[];
+        for (const emitter of poolEmitters) {
+          if (emitter && typeof emitter.on === "function") {
+            emitter.on("error", onPoolError);
+          }
+        }
         log("info", "MySQL pool created successfully");
         resolve(pool);
       } catch (error) {

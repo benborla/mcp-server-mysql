@@ -369,6 +369,13 @@ export default function createMcpServer({
   });
 
   // Initialize database connection and set up shutdown handlers
+  //
+  // The startup connectivity check is best-effort: the MySQL server may be
+  // unreachable (VPN/tunnel down, wrong host, DB still booting). Exiting here
+  // makes the MCP client see the server die right after the initialize
+  // handshake, reconnect-loop, and eventually circuit-break it. Instead, warn
+  // on stderr (log() is gated behind ENABLE_LOGGING) and keep serving; tool
+  // calls return normal tool errors until the database becomes reachable.
   (async () => {
     try {
       log("info", "Attempting to test database connection...");
@@ -378,8 +385,12 @@ export default function createMcpServer({
       log("info", "Database connection test successful");
       connection.release();
     } catch (error) {
-      log("error", "Fatal error during server startup:", error);
-      safeExit(1);
+      const message =
+        error instanceof Error ? error.message : String(error);
+      log("error", "Database unreachable during startup:", message);
+      console.error(
+        `MySQL server unreachable at startup: ${message} — continuing to serve; queries will return errors until the database is reachable`,
+      );
     }
   })();
 
@@ -419,14 +430,26 @@ export default function createMcpServer({
   });
 
   // Add unhandled error listeners
+  //
+  // Log-and-continue: uncaught errors — typically database connection errors
+  // surfacing outside a request handler — must not kill the server. Exiting
+  // here makes the MCP client reconnect-loop and circuit-break the process.
+  // Errors are always written to stderr so they remain visible even when
+  // ENABLE_LOGGING is off.
   process.on("uncaughtException", (error) => {
     log("error", "Uncaught exception:", error);
-    safeExit(1);
+    console.error(
+      `uncaughtException (continuing): ${error?.stack || error}`,
+    );
   });
 
   process.on("unhandledRejection", (reason, promise) => {
     log("error", "Unhandled rejection at:", promise, "reason:", reason);
-    safeExit(1);
+    console.error(
+      `unhandledRejection (continuing): ${
+        (reason as Error)?.stack || String(reason)
+      }`,
+    );
   });
 
   return server;

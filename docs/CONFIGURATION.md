@@ -29,6 +29,7 @@ Useful for rotating/expiring credentials. Store via env, not in version-controll
 | `MYSQL_CACHE_TTL` | `60000` | Cache TTL (ms) |
 | `MYSQL_QUEUE_LIMIT` | `100` | Max queued connection requests |
 | `MYSQL_CONNECT_TIMEOUT` | `10000` | Connection timeout (ms) |
+| `MYSQL_POOL_IDLE_TIMEOUT` | — | Close pooled connections idle longer than this (ms, checked about once a second); unset keeps them open. Session state (`USE`, variables) does not survive a closed connection |
 
 ## Security & Permissions
 

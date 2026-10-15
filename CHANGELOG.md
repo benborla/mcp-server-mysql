@@ -23,6 +23,12 @@
   ambiguity with commas inside regex character classes. Invalid patterns are
   logged and skipped, so one bad entry cannot crash the server. Only active
   when `ENABLE_PII_REDACTION=true`.
+- `MYSQL_POOL_IDLE_TIMEOUT` environment variable. When set (for example to
+  `60000`), the pool closes connections that stay idle longer than this many
+  milliseconds, so a server that runs no queries holds no database connection.
+  By default idle connections stay open until the MySQL server's
+  `wait_timeout`, as before. Session state (`USE`, user variables, temporary
+  tables) does not survive a closed connection.
 
 ## Planned Features
 

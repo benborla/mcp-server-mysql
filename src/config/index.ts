@@ -192,6 +192,24 @@ export const IS_REMOTE_MCP = process.env.IS_REMOTE_MCP === "true";
 export const REMOTE_SECRET_KEY = process.env.REMOTE_SECRET_KEY || "";
 export const PORT = process.env.PORT || 3000;
 
+/**
+ * Read an optional positive integer from the environment. Invalid values are
+ * logged and ignored, so a typo keeps the default instead of crashing the
+ * server.
+ */
+function parsePositiveInt(name: string): number | undefined {
+  const raw = process.env[name]?.trim();
+  if (!raw) return undefined;
+  if (!/^[1-9]\d*$/.test(raw)) {
+    console.error(`[config] ignoring ${name}="${raw}": expected a positive integer`);
+    return undefined;
+  }
+  return Number(raw);
+}
+
+const POOL_CONNECTION_LIMIT = 10;
+const POOL_IDLE_TIMEOUT = parsePositiveInt("MYSQL_POOL_IDLE_TIMEOUT");
+
 // Check if we're in multi-DB mode (no specific DB set)
 const dbFromEnvOrConnString = connectionStringConfig.database || process.env.MYSQL_DB;
 export const isMultiDbMode =
@@ -221,7 +239,11 @@ export const mcpConfig = {
           ? ""
           : process.env.MYSQL_PASS,
     database: connectionStringConfig.database || process.env.MYSQL_DB || undefined, // Allow undefined database for multi-DB mode
-    connectionLimit: 10,
+    connectionLimit: POOL_CONNECTION_LIMIT,
+    // mysql2 closes idle connections only when maxIdle is below connectionLimit
+    ...(POOL_IDLE_TIMEOUT !== undefined
+      ? { maxIdle: POOL_CONNECTION_LIMIT - 1, idleTimeout: POOL_IDLE_TIMEOUT }
+      : {}),
     waitForConnections: true,
     queueLimit: process.env.MYSQL_QUEUE_LIMIT ? parseInt(process.env.MYSQL_QUEUE_LIMIT, 10) : 100,
     enableKeepAlive: true,

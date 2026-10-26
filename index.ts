@@ -55,6 +55,15 @@ if (isMultiDbMode) {
   toolDescription += " (Multi-DB mode enabled)";
 }
 
+// Schema-specific permissions can enable writes even when the global
+// ALLOW_*_OPERATION flags are off (see src/db/permissions.ts)
+const hasSchemaWritePermissions = [
+  SCHEMA_INSERT_PERMISSIONS,
+  SCHEMA_UPDATE_PERMISSIONS,
+  SCHEMA_DELETE_PERMISSIONS,
+  SCHEMA_DDL_PERMISSIONS,
+].some((permissions) => Object.values(permissions).some(Boolean));
+
 if (
   ALLOW_INSERT_OPERATION ||
   ALLOW_UPDATE_OPERATION ||
@@ -91,17 +100,23 @@ if (
   ) {
     toolDescription += " (Schema-specific permissions enabled)";
   }
+} else if (hasSchemaWritePermissions) {
+  // Global writes are disabled, but schema-specific permissions allow writes
+  toolDescription +=
+    " (READ-ONLY by default; schema-specific write permissions enabled)";
 } else {
   // Only read operations are allowed
   toolDescription += " (READ-ONLY)";
 }
 
-// Determine if we're in read-only mode (no write operations enabled)
+// Determine if we're in read-only mode (no write operations enabled, either
+// globally or for any schema via SCHEMA_*_PERMISSIONS)
 const isReadOnly = !(
   ALLOW_INSERT_OPERATION ||
   ALLOW_UPDATE_OPERATION ||
   ALLOW_DELETE_OPERATION ||
-  ALLOW_DDL_OPERATION
+  ALLOW_DDL_OPERATION ||
+  hasSchemaWritePermissions
 );
 
 // @INFO: Add debug logging for configuration

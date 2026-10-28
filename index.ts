@@ -30,6 +30,11 @@ import {
   ENABLE_PII_REDACTION,
   PII_EXTRA_COLUMNS,
   PII_EXTRA_COLUMN_PATTERNS,
+  MYSQL_QUERY_TIMEOUT,
+  MYSQL_QUERY_TIMEOUT_MAX,
+  QUERY_TIMEOUT_CEILING,
+  QUERY_TIMEOUT_RULE,
+  isValidQueryTimeout,
 } from "./src/config/index.js";
 import { isPIIColumn, DEFAULT_PII_COLUMNS } from "./src/security/redact.js";
 import {
@@ -96,6 +101,24 @@ if (
   toolDescription += " (READ-ONLY)";
 }
 
+// Lets the caller (e.g. an agent told "give this query 2 minutes") change
+// MYSQL_QUERY_TIMEOUT for a single call, within QUERY_TIMEOUT_CEILING.
+const timeoutMsProperty = {
+  type: "integer",
+  minimum: QUERY_TIMEOUT_CEILING ? 1 : 0,
+  ...(QUERY_TIMEOUT_CEILING ? { maximum: QUERY_TIMEOUT_CEILING } : {}),
+  description:
+    `Optional. Max execution time for this query in milliseconds. ` +
+    `Defaults to ${MYSQL_QUERY_TIMEOUT} (MYSQL_QUERY_TIMEOUT). ` +
+    (QUERY_TIMEOUT_CEILING
+      ? `Must be 1-${QUERY_TIMEOUT_CEILING}` +
+        (MYSQL_QUERY_TIMEOUT_MAX ? ` (MYSQL_QUERY_TIMEOUT_MAX). ` : `; this server only lets a call shorten the default. `)
+      : `0 = no limit. `) +
+    `Enforced by the server (MySQL max_execution_time bounds SELECT only; ` +
+    `MariaDB max_statement_time bounds every statement), and never above a ` +
+    `limit the server already sets for this account.`,
+};
+
 // Determine if we're in read-only mode (no write operations enabled)
 const isReadOnly = !(
   ALLOW_INSERT_OPERATION ||
@@ -128,6 +151,8 @@ log(
       sslCert: process.env.MYSQL_SSL_CERT || "not set",
       sslKey: process.env.MYSQL_SSL_KEY || "not set",
       multiDbMode: isMultiDbMode ? "enabled" : "disabled",
+      queryTimeoutMs: MYSQL_QUERY_TIMEOUT,
+      queryTimeoutMaxMs: MYSQL_QUERY_TIMEOUT_MAX || "not set",
     },
     null,
     2,
@@ -166,6 +191,7 @@ export default function createMcpServer({
                   type: "string",
                   description: "The SQL query to execute",
                 },
+                timeout_ms: timeoutMsProperty,
               },
               required: ["sql"],
             },
@@ -316,7 +342,12 @@ export default function createMcpServer({
       }
 
       const sql = request.params.arguments?.sql as string;
-      return await executeReadOnlyQuery(sql);
+      const timeoutMs = request.params.arguments?.timeout_ms;
+      // Some clients send null for an omitted optional argument.
+      if (timeoutMs != null && !isValidQueryTimeout(timeoutMs)) {
+        throw new Error(`timeout_ms must be ${QUERY_TIMEOUT_RULE}`);
+      }
+      return await executeReadOnlyQuery(sql, timeoutMs ?? undefined);
     } catch (err) {
       const error = err as Error;
       log("error", "Error in CallToolRequest handler:", error);
@@ -346,6 +377,7 @@ export default function createMcpServer({
                 type: "string",
                 description: "The SQL query to execute",
               },
+              timeout_ms: timeoutMsProperty,
             },
             required: ["sql"],
           },

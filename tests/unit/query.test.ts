@@ -1,4 +1,4 @@
-import { vi, describe, it, expect, beforeEach } from "vitest";
+import { vi, describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
   executeQuery,
   executeReadOnlyQuery,
@@ -52,12 +52,27 @@ describe("Query Functions", () => {
   });
 
   describe("executeQuery", () => {
+    // The timeout probe (first acquire of a connection) and the SET run before
+    // each query: answer them, and hand every other statement to `run`.
+    const routeQueries = (run: (sql: string) => unknown) =>
+      mockConnection.query.mockImplementation(async (sql: string) =>
+        /max_execution_time/.test(sql) ? [[{ v: 0 }], null] : run(sql),
+      );
+
+    afterEach(() => {
+      mockConnection.query.mockReset();
+    });
+
     it("should execute a query and return results", async () => {
       const mockResults = [{ id: 1, name: "Test" }];
-      mockConnection.query.mockResolvedValueOnce([mockResults, null]);
+      routeQueries(() => [mockResults, null]);
 
       const result = await executeQuery("SELECT * FROM test", []);
 
+      expect(mockConnection.query).toHaveBeenCalledWith(
+        "SET SESSION max_execution_time = ?",
+        [30000],
+      );
       expect(mockConnection.query).toHaveBeenCalledWith(
         "SELECT * FROM test",
         [],
@@ -68,7 +83,7 @@ describe("Query Functions", () => {
 
     it("should handle query parameters correctly", async () => {
       const params = ["test", 123];
-      mockConnection.query.mockResolvedValueOnce([[{ id: 1 }], null]);
+      routeQueries(() => [[{ id: 1 }], null]);
 
       await executeQuery(
         "SELECT * FROM test WHERE name = ? AND id = ?",
@@ -82,7 +97,9 @@ describe("Query Functions", () => {
     });
 
     it("should release connection even if query fails", async () => {
-      mockConnection.query.mockRejectedValueOnce(new Error("Query failed"));
+      routeQueries(() => {
+        throw new Error("Query failed");
+      });
 
       await expect(executeQuery("SELECT * FROM test", [])).rejects.toThrow(
         "Query failed",

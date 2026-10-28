@@ -2,7 +2,26 @@
 
 ## Unreleased
 
+### Fixed
+
+- `MYSQL_QUERY_TIMEOUT` is now applied. It was documented (default `30000` ms)
+  but never read, so a slow `SELECT` could leave the tool call hanging with no
+  result (#148). The database enforces the limit (MySQL `max_execution_time`,
+  MariaDB `max_statement_time`), so the statement is actually stopped and the
+  call returns an error that states the limit. `0` disables it. It never goes
+  above a limit the database already applies to the session (global,
+  `init_connect`, per-user). See `docs/CONFIGURATION.md` for details and what
+  is not bounded.
+
 ### Added
+
+- `timeout_ms` argument on the `mysql_query` tool. Changes
+  `MYSQL_QUERY_TIMEOUT` for a single call. By default a call can only
+  shorten it.
+- `MYSQL_QUERY_TIMEOUT_MAX` environment variable. Lets `timeout_ms` go above
+  `MYSQL_QUERY_TIMEOUT`, up to this value, e.g. when a user tells the agent
+  a query may take two minutes. `timeout_ms: 0` (no limit) is rejected while
+  a ceiling applies.
 
 - `ENABLE_PII_REDACTION` environment variable. When set to `"true"`, read-only
   query results are walked and likely PII values are replaced with shape-preserving
@@ -23,6 +42,13 @@
   ambiguity with commas inside regex character classes. Invalid patterns are
   logged and skipped, so one bad entry cannot crash the server. Only active
   when `ENABLE_PII_REDACTION=true`.
+
+### Changed
+
+- SQL that sets its own timeout (MySQL `max_execution_time` optimizer hints,
+  MariaDB `SET STATEMENT max_statement_time=... FOR`) is rejected; use
+  `timeout_ms` instead. Such SQL would override both this server's limit
+  and the database's own.
 
 ## Planned Features
 

@@ -25,10 +25,23 @@ Useful for rotating/expiring credentials. Store via env, not in version-controll
 | Variable | Default | Description |
 |---|---|---|
 | `MYSQL_POOL_SIZE` | `10` | Connection pool size |
-| `MYSQL_QUERY_TIMEOUT` | `30000` | Query timeout (ms) |
+| `MYSQL_QUERY_TIMEOUT` | `30000` | Query timeout (ms), `0` = no limit. A call can shorten it with the `timeout_ms` tool argument |
+| `MYSQL_QUERY_TIMEOUT_MAX` | unset | Lets `timeout_ms` go above `MYSQL_QUERY_TIMEOUT`, up to this value (ms). Unset: a call can only shorten the default |
 | `MYSQL_CACHE_TTL` | `60000` | Cache TTL (ms) |
 | `MYSQL_QUEUE_LIMIT` | `100` | Max queued connection requests |
 | `MYSQL_CONNECT_TIMEOUT` | `10000` | Connection timeout (ms) |
+
+How the query timeout works:
+
+- The server sets a session limit before each query, so the database stops the statement and the call returns an error that states the limit.
+  - MySQL 5.7.8+: `max_execution_time`. It bounds `SELECT` statements only; writes and `CALL` are not bounded (a `SELECT` inside a stored program is exempt), and an interrupted `EXPLAIN ANALYZE` returns a partial plan with warning 1317 instead of an error.
+  - MariaDB 10.1+: `max_statement_time`. It bounds every statement.
+  - Other servers: the server logs this once per connection, and queries run without a limit.
+- The limit never goes above what the database already applies to the session: the global value, or a value that `init_connect`, a MariaDB per-user `MAX_STATEMENT_TIME`, or a proxy sets for the account. The smaller value wins, and `0` falls back to the database's value. Each connection reads that value once, the first time it is used, the same way MySQL copies the global into a new session.
+- Behind a proxy: ProxySQL 2.4+ tracks the variable (older versions turn off multiplexing for the session), RDS Proxy pins the connection, and Vitess/PlanetScale ignores it, so use Vitess's own query timeout there.
+- The MCP client can give up first. Many clients time out a tool call after 60 s by default, so to let a call run longer, raise the client's timeout too (in Claude Code, `MCP_TOOL_TIMEOUT` or the server's `timeout` in `.mcp.json`).
+- `timeout_ms` must be 1 to the ceiling: `MYSQL_QUERY_TIMEOUT_MAX`, or `MYSQL_QUERY_TIMEOUT` when `MYSQL_QUERY_TIMEOUT_MAX` is unset. Only when both are `0`/unset is any value, including `0`, accepted. If `MYSQL_QUERY_TIMEOUT` is unset and `MYSQL_QUERY_TIMEOUT_MAX` is set, the default becomes the smaller of `30000` and `MYSQL_QUERY_TIMEOUT_MAX`; an explicit value outside 1 to `MYSQL_QUERY_TIMEOUT_MAX` fails at startup.
+- SQL that sets the limit itself is always rejected, because it would override both this server's limit and the database's: MySQL optimizer hints for `max_execution_time` (`MAX_EXECUTION_TIME(...)`, `SET_VAR(...)`) and MariaDB `SET STATEMENT max_statement_time=... FOR`. Use `timeout_ms` instead.
 
 ## Security & Permissions
 

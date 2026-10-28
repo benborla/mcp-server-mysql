@@ -78,6 +78,57 @@ export const ALLOW_DDL_OPERATION = process.env.ALLOW_DDL_OPERATION === "true";
 export const MYSQL_DISABLE_READ_ONLY_TRANSACTIONS = 
   process.env.MYSQL_DISABLE_READ_ONLY_TRANSACTIONS === "true";
 
+// Query timeout in ms, enforced by the database. 0 = no limit.
+// 4294967295 is the largest value max_execution_time accepts.
+const isMs = (ms: unknown): ms is number =>
+  Number.isInteger(ms) && (ms as number) >= 0 && (ms as number) <= 4294967295;
+const msRule = (ceiling: number) =>
+  ceiling
+    ? `an integer from 1 to ${ceiling} ms`
+    : "a non-negative integer in milliseconds";
+
+// Lets a call's `timeout_ms` go above MYSQL_QUERY_TIMEOUT, up to this value.
+// 0 (or unset) = a call can only shorten the default.
+export const MYSQL_QUERY_TIMEOUT_MAX = Number(
+  process.env.MYSQL_QUERY_TIMEOUT_MAX || "0",
+);
+if (!isMs(MYSQL_QUERY_TIMEOUT_MAX)) {
+  throw new Error(
+    `MYSQL_QUERY_TIMEOUT_MAX must be ${msRule(0)}, got "${process.env.MYSQL_QUERY_TIMEOUT_MAX}"`,
+  );
+}
+
+const defaultQueryTimeout = MYSQL_QUERY_TIMEOUT_MAX
+  ? Math.min(30000, MYSQL_QUERY_TIMEOUT_MAX)
+  : 30000;
+export const MYSQL_QUERY_TIMEOUT = Number(
+  process.env.MYSQL_QUERY_TIMEOUT || defaultQueryTimeout,
+);
+if (
+  !isMs(MYSQL_QUERY_TIMEOUT) ||
+  (MYSQL_QUERY_TIMEOUT_MAX &&
+    (MYSQL_QUERY_TIMEOUT < 1 || MYSQL_QUERY_TIMEOUT > MYSQL_QUERY_TIMEOUT_MAX))
+) {
+  throw new Error(
+    `MYSQL_QUERY_TIMEOUT must be ${msRule(MYSQL_QUERY_TIMEOUT_MAX)}, got "${process.env.MYSQL_QUERY_TIMEOUT}"`,
+  );
+}
+
+// The highest `timeout_ms` a call may ask for. 0 = no ceiling, which only
+// happens when the default itself is 0 (no limit) and no MAX is set.
+export const QUERY_TIMEOUT_CEILING =
+  MYSQL_QUERY_TIMEOUT_MAX || MYSQL_QUERY_TIMEOUT;
+export const QUERY_TIMEOUT_RULE =
+  msRule(QUERY_TIMEOUT_CEILING) +
+  (QUERY_TIMEOUT_CEILING
+    ? MYSQL_QUERY_TIMEOUT_MAX
+      ? " (MYSQL_QUERY_TIMEOUT_MAX)"
+      : " (MYSQL_QUERY_TIMEOUT; set MYSQL_QUERY_TIMEOUT_MAX to allow longer)"
+    : "");
+export const isValidQueryTimeout = (ms: unknown): ms is number =>
+  isMs(ms) &&
+  (!QUERY_TIMEOUT_CEILING || (ms >= 1 && ms <= QUERY_TIMEOUT_CEILING));
+
 // PII redaction: when enabled, read-only query results are walked and
 // sensitive values are partially masked before being returned to the client.
 // See src/security/redact.ts for the detection and masking rules.

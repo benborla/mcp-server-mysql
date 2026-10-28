@@ -81,6 +81,7 @@ All write operations are disabled by default. Enable with `ALLOW_INSERT_OPERATIO
 
 **Tool: `mysql_query`**
 Execute SQL queries. Read-only by default. Write operations enabled per flag.
+Optional `timeout_ms` changes `MYSQL_QUERY_TIMEOUT` for a single call: shorter by default, or longer up to `MYSQL_QUERY_TIMEOUT_MAX` if set.
 
 **Resources: `mysql://tables`**
 Lists all tables and column metadata for the connected database.

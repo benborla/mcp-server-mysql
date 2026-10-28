@@ -20,6 +20,8 @@ import { log } from "./../utils/index.js";
 import {
   mcpConfig as config,
   MYSQL_DISABLE_READ_ONLY_TRANSACTIONS,
+  MYSQL_QUERY_TIMEOUT,
+  QUERY_TIMEOUT_CEILING,
   ENABLE_PII_REDACTION,
   PII_EXTRA_COLUMNS,
   PII_EXTRA_COLUMN_PATTERNS,
@@ -73,11 +75,100 @@ const getPool = (): Promise<mysql2.Pool> => {
   return poolPromise;
 };
 
+// Query timeouts are enforced by the server, so it stops the statement, the
+// call returns an error and the connection stays usable. mysql2's client-side
+// `timeout` is not used: it rejects the promise but leaves the statement
+// running, so the rollback that follows still waits for it.
+//
+// Each physical connection is probed once for the variable the server has and
+// its starting value. That value is the global or whatever init_connect or a
+// proxy set for this account, and a call is never allowed to go above it.
+type TimeoutSupport = {
+  variable: "max_execution_time" | "max_statement_time";
+  serverDefaultMs: number;
+} | null;
+const timeoutSupport = new WeakMap<object, TimeoutSupport>();
+
+async function probeTimeoutSupport(
+  connection: mysql2.PoolConnection,
+): Promise<TimeoutSupport> {
+  try {
+    // MySQL 5.7.8+: milliseconds, bounds SELECT only.
+    const [rows] = await connection.query("SELECT @@SESSION.max_execution_time AS v");
+    const v = Number((rows as { v: unknown }[])[0].v);
+    return { variable: "max_execution_time", serverDefaultMs: v };
+  } catch {
+    // Unknown variable: try MariaDB below.
+  }
+  try {
+    // MariaDB 10.1+: seconds, bounds every statement.
+    const [rows] = await connection.query("SELECT @@SESSION.max_statement_time AS v");
+    const v = Number((rows as { v: unknown }[])[0].v);
+    return { variable: "max_statement_time", serverDefaultMs: Math.round(v * 1000) };
+  } catch {
+    log("error", "Server has no max_execution_time or max_statement_time; queries run without a timeout.");
+    return null;
+  }
+}
+
+// The server's own default wins whenever it is stricter; 0 means no limit.
+export function effectiveTimeoutMs(requestedMs: number, serverDefaultMs: number): number {
+  if (serverDefaultMs <= 0) return requestedMs;
+  return requestedMs === 0 ? serverDefaultMs : Math.min(requestedMs, serverDefaultMs);
+}
+
+// Set on every acquire, because a pooled session keeps the previous call's value.
+// Returns the limit in effect, or null when the server cannot enforce one.
+async function setQueryTimeout(
+  connection: mysql2.PoolConnection,
+  requestedMs: number,
+): Promise<number | null> {
+  // The promise wrapper is new on every acquire; the core connection is not.
+  const key = (connection as { connection?: object }).connection ?? connection;
+  let support = timeoutSupport.get(key);
+  if (support === undefined) {
+    support = await probeTimeoutSupport(connection);
+    timeoutSupport.set(key, support);
+  }
+  if (!support) return null;
+
+  const ms = effectiveTimeoutMs(requestedMs, support.serverDefaultMs);
+  try {
+    // A plain literal SET, so proxies such as ProxySQL and RDS Proxy can track it.
+    await connection.query(`SET SESSION ${support.variable} = ?`, [
+      support.variable === "max_statement_time" ? ms / 1000 : ms,
+    ]);
+    return ms;
+  } catch (error) {
+    log("error", `Could not set ${support.variable}:`, error);
+    return null;
+  }
+}
+
+// Appended to a timeout error so the caller knows the limit and what to do next.
+function describeTimeout(requestedMs: number, effectiveMs: number | null): string {
+  if (effectiveMs === null) return "";
+  if (effectiveMs !== requestedMs) {
+    return ` (limit: ${effectiveMs} ms, set by the server for this account. timeout_ms cannot raise it.)`;
+  }
+  if (QUERY_TIMEOUT_CEILING && effectiveMs >= QUERY_TIMEOUT_CEILING) {
+    return ` (limit: ${effectiveMs} ms, the highest this server allows.)`;
+  }
+  return (
+    ` (limit: ${effectiveMs} ms. Pass timeout_ms to change it` +
+    (QUERY_TIMEOUT_CEILING ? `, up to ${QUERY_TIMEOUT_CEILING} ms.)` : ".)")
+  );
+}
+
+// ER_QUERY_TIMEOUT (MySQL) and ER_STATEMENT_TIMEOUT (MariaDB).
+const TIMEOUT_ERRNOS = [3024, 1969];
+
 async function executeQuery<T>(sql: string, params: string[] = []): Promise<T> {
   let connection;
   try {
     const pool = await getPool();
     connection = await pool.getConnection();
+    await setQueryTimeout(connection, MYSQL_QUERY_TIMEOUT);
     const result = await connection.query(sql, params);
     return (Array.isArray(result) ? result[0] : result) as T;
   } catch (error) {
@@ -197,9 +288,30 @@ async function executeWriteQuery<T>(sql: string): Promise<T> {
   }
 }
 
-async function executeReadOnlyQuery<T>(sql: string): Promise<T> {
+async function executeReadOnlyQuery<T>(
+  sql: string,
+  timeoutMs: number = MYSQL_QUERY_TIMEOUT,
+): Promise<T> {
   let connection;
   try {
+    // Statement-level overrides beat the session value, so they would step
+    // around both the ceiling and the database's own limit: MySQL optimizer
+    // hints (MAX_EXECUTION_TIME(...), SET_VAR(max_execution_time=...)) and
+    // MariaDB's SET STATEMENT max_statement_time=... FOR ...
+    if (/\/\*\+[^*]*max_execution_time|\bmax_statement_time\b/i.test(sql)) {
+      return {
+        content: [
+          {
+            type: "text",
+            text:
+              "Error: setting max_execution_time or max_statement_time in the SQL is not allowed. " +
+              "Use the timeout_ms argument instead.",
+          },
+        ],
+        isError: true,
+      } as T;
+    }
+
     // PII redaction works hand-in-hand with explicit column projection: the
     // schema endpoint hides redacted columns, so the LLM should never need
     // SELECT *. Refusing wildcard projections here prevents the LLM from
@@ -420,6 +532,7 @@ async function executeReadOnlyQuery<T>(sql: string): Promise<T> {
     const pool = await getPool();
     connection = await pool.getConnection();
     log("error", "Read-only connection acquired");
+    const effectiveMs = await setQueryTimeout(connection, timeoutMs);
 
     // Set read-only mode (unless disabled via environment variable)
     if (!MYSQL_DISABLE_READ_ONLY_TRANSACTIONS) {
@@ -508,6 +621,9 @@ async function executeReadOnlyQuery<T>(sql: string): Promise<T> {
     } catch (error) {
       // Rollback transaction on query error
       log("error", "Error executing read-only query:", error);
+      if (TIMEOUT_ERRNOS.includes((error as { errno?: number }).errno ?? 0)) {
+        (error as Error).message += describeTimeout(timeoutMs, effectiveMs);
+      }
       await connection.rollback();
       throw error;
     }

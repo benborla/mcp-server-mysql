@@ -2,7 +2,6 @@
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
   CallToolRequestSchema,
   ListResourcesRequestSchema,
@@ -26,7 +25,6 @@ import {
   MCP_VERSION as version,
   IS_REMOTE_MCP,
   REMOTE_SECRET_KEY,
-  PORT,
   ENABLE_PII_REDACTION,
   PII_EXTRA_COLUMNS,
   PII_EXTRA_COLUMN_PATTERNS,
@@ -34,13 +32,12 @@ import {
 import { isPIIColumn, DEFAULT_PII_COLUMNS } from "./src/security/redact.js";
 import {
   safeExit,
-  getPool,
   executeQuery,
   executeReadOnlyQuery,
-  poolPromise,
 } from "./src/db/index.js";
 
-import express, { Request, Response } from "express";
+import { startHttpServer, resolveHttpOptions } from "./src/http/index.js";
+import { runProcessSetup } from "./src/setup/index.js";
 import { fileURLToPath } from 'url';
 import { realpathSync } from 'fs';
 
@@ -368,67 +365,6 @@ export default function createMcpServer({
     return toolsResponse;
   });
 
-  // Initialize database connection and set up shutdown handlers
-  (async () => {
-    try {
-      log("info", "Attempting to test database connection...");
-      // Test the connection before fully starting the server
-      const pool = await getPool();
-      const connection = await pool.getConnection();
-      log("info", "Database connection test successful");
-      connection.release();
-    } catch (error) {
-      log("error", "Fatal error during server startup:", error);
-      safeExit(1);
-    }
-  })();
-
-  // Setup shutdown handlers
-  const shutdown = async (signal: string): Promise<void> => {
-    log("error", `Received ${signal}. Shutting down...`);
-    try {
-      // Only attempt to close the pool if it was created
-      if (poolPromise) {
-        const pool = await poolPromise;
-        await pool.end();
-      }
-    } catch (err) {
-      log("error", "Error closing pool:", err);
-      throw err;
-    }
-  };
-
-  process.on("SIGINT", async () => {
-    try {
-      await shutdown("SIGINT");
-      process.exit(0);
-    } catch (err) {
-      log("error", "Error during SIGINT shutdown:", err);
-      safeExit(1);
-    }
-  });
-
-  process.on("SIGTERM", async () => {
-    try {
-      await shutdown("SIGTERM");
-      process.exit(0);
-    } catch (err) {
-      log("error", "Error during SIGTERM shutdown:", err);
-      safeExit(1);
-    }
-  });
-
-  // Add unhandled error listeners
-  process.on("uncaughtException", (error) => {
-    log("error", "Uncaught exception:", error);
-    safeExit(1);
-  });
-
-  process.on("unhandledRejection", (reason, promise) => {
-    log("error", "Unhandled rejection at:", promise, "reason:", reason);
-    safeExit(1);
-  });
-
   return server;
 }
 
@@ -466,102 +402,19 @@ if (isMainModule()) {
   // Start the server
   (async () => {
     try {
-      const mcpServer = createMcpServer({ config: { debug: false } });
       if (IS_REMOTE_MCP && REMOTE_SECRET_KEY?.length) {
-        const app = express();
-        app.use(express.json());
-        app.post("/mcp", async (req: Request, res: Response) => {
-          // In stateless mode, create a new instance of transport and server for each request
-          // to ensure complete isolation. A single instance would cause request ID collisions
-          // when multiple clients connect concurrently.
-          if (
-            !req.get("Authorization") ||
-            !req.get("Authorization")?.startsWith("Bearer ") ||
-            !req.get("Authorization")?.endsWith(REMOTE_SECRET_KEY)
-          ) {
-            console.error("Missing or invalid Authorization header");
-            res.status(401).json({
-              jsonrpc: "2.0",
-              error: {
-                code: -32603,
-                message: "Missing or invalid Authorization header",
-              },
-              id: null,
-            });
-            return;
-          }
-          try {
-            const server = createMcpServer({ config: { debug: false } });
-            const transport: StreamableHTTPServerTransport =
-              new StreamableHTTPServerTransport({
-                sessionIdGenerator: undefined,
-              });
-            res.on("close", () => {
-              log("info", "Request closed");
-              transport.close();
-              server.close();
-            });
-            await server.connect(transport);
-            await transport.handleRequest(req, res, req.body);
-          } catch (error) {
-            log("error", "Error handling MCP request:", error);
-            if (!res.headersSent) {
-              res.status(500).json({
-                jsonrpc: "2.0",
-                error: {
-                  code: -32603,
-                  message: (error as any).message,
-                },
-                id: null,
-              });
-            }
-          }
-        });
-
-        // SSE notifications not supported in stateless mode
-        app.get("/mcp", async (req: Request, res: Response) => {
-          console.log("Received GET MCP request");
-          res.writeHead(405).end(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              error: {
-                code: -32000,
-                message: "Method not allowed.",
-              },
-              id: null,
-            }),
-          );
-        });
-
-        // Session termination not needed in stateless mode
-        app.delete("/mcp", async (req: Request, res: Response) => {
-          console.log("Received DELETE MCP request");
-          res.writeHead(405).end(
-            JSON.stringify({
-              jsonrpc: "2.0",
-              error: {
-                code: -32000,
-                message: "Method not allowed.",
-              },
-              id: null,
-            }),
-          );
-        });
-
-        // Start the server
-        app.listen(PORT, (error) => {
-          if (error) {
-            console.error("Failed to start server:", error);
-            process.exit(1);
-          }
-          console.log(
-            `MCP Stateless Streamable HTTP Server listening on port ${PORT}`,
-          );
+        // Fail fast: do not listen until the database is reachable.
+        await runProcessSetup();
+        // A new server and transport are created per request for isolation.
+        await startHttpServer({
+          ...resolveHttpOptions(process.env),
+          createServer: () => createMcpServer({ config: { debug: false } }),
         });
       } else {
+        // Not awaited, as before: stdio clients may initialize while the check runs.
+        void runProcessSetup();
+        const mcpServer = createMcpServer({ config: { debug: false } });
         const transport = new StdioServerTransport();
-        // Create a server instance directly instead of importing
-
         await mcpServer.connect(transport);
         log("info", "Server started and listening on stdio");
       }

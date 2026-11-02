@@ -195,7 +195,8 @@ node dist/index.js
 3. Set `IS_REMOTE_MCP=true`
 4. Set `REMOTE_SECRET_KEY` to a secure string
 5. Optionally set `PORT` (default: 3000)
-6. Load and run:
+6. Optionally set `MCP_HOST` (default: `127.0.0.1`, loopback only). Use `MCP_HOST=0.0.0.0` in containers or when other machines must connect; earlier versions listened on all interfaces.
+7. Load and run:
 
 ```bash
 source .env

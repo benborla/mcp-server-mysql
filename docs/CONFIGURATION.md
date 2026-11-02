@@ -97,6 +97,7 @@ See [PII-REDACTION.md](./PII-REDACTION.md) for full documentation.
 | `IS_REMOTE_MCP` | `false` | Enable HTTP server mode |
 | `REMOTE_SECRET_KEY` | — | Bearer token for remote auth |
 | `PORT` | `3000` | HTTP server port |
+| `MCP_HOST` | `127.0.0.1` | Interface the HTTP server binds to. Set `0.0.0.0` explicitly for containers or remote access. **Behavior change:** earlier versions listened on all interfaces. |
 
 ## Advanced Config Example
 

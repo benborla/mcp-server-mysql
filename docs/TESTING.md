@@ -42,7 +42,7 @@ pnpm test:coverage       # coverage report
 ## Evals
 
 ```bash
-OPENAI_API_KEY=your-key npx mcp-eval evals.ts index.ts
+OPENAI_API_KEY=your-key pnpm evals
 ```
 
-No rebuild needed — evals load `index.ts` directly via MCP client. See [MCP Evals docs](https://www.mcpevals.io/docs).
+No rebuild needed — the evals connect to `index.ts` directly over stdio with the AI SDK MCP client. Pass a different server entrypoint with `pnpm evals <path>`, or run `node dist/evals.js <path>` from a built checkout.

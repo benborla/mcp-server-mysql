@@ -74,7 +74,9 @@
     "katex": "0.19.1",
     "re2js": "2.9.1",
     "jsondiffpatch": "0.7.6",
-    "minimatch": "11.0.1"
+    "minimatch": "11.0.1",
+    "@hono/node-server": "2.1.6",
+    "hono": "4.13.16"
   },
   "pnpm": {
     "overrides": {
@@ -84,7 +86,9 @@
       "katex": "0.19.1",
       "re2js": "2.9.1",
       "jsondiffpatch": "0.7.6",
-      "minimatch": "11.0.1"
+      "minimatch": "11.0.1",
+      "@hono/node-server": "2.1.6",
+      "hono": "4.13.16"
     }
   },
   "publishConfig": {

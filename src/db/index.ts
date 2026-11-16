@@ -9,6 +9,7 @@ import {
 } from "./permissions.js";
 import {
   extractSchemaFromQuery,
+  extractSchemasFromQuery,
   getQueryTypes,
   containsSelectStar,
   findPIIColumnReferences,
@@ -324,7 +325,7 @@ async function executeReadOnlyQuery<T>(sql: string): Promise<T> {
     // queryType + permission + write-routing block entirely for these and
     // execute them directly below.
     let queryTypes: string[] = [];
-    let schema: string | null = null;
+    let schemas: (string | null)[] = [null];
     let isUpdateOperation = false;
     let isInsertOperation = false;
     let isDeleteOperation = false;
@@ -332,7 +333,8 @@ async function executeReadOnlyQuery<T>(sql: string): Promise<T> {
 
     if (!introspectionFilterKind && !isIntrospectionPassThrough) {
       queryTypes = await getQueryTypes(sql);
-      schema = extractSchemaFromQuery(sql);
+      const extractedSchemas = extractSchemasFromQuery(sql);
+      schemas = extractedSchemas.length > 0 ? extractedSchemas : [null];
       isUpdateOperation = queryTypes.some((type) => ["update"].includes(type));
       isInsertOperation = queryTypes.some((type) => ["insert"].includes(type));
       isDeleteOperation = queryTypes.some((type) => ["delete"].includes(type));
@@ -341,77 +343,89 @@ async function executeReadOnlyQuery<T>(sql: string): Promise<T> {
       );
     }
 
-    // Check schema-specific permissions
-    if (isInsertOperation && !isInsertAllowedForSchema(schema)) {
+    // Check schema-specific permissions across all referenced schemas
+    const deniedInsertSchema = isInsertOperation
+      ? schemas.find((s) => !isInsertAllowedForSchema(s))
+      : undefined;
+    if (isInsertOperation && deniedInsertSchema !== undefined) {
       log(
         "error",
-        `INSERT operations are not allowed for schema '${schema || "default"}'. Configure SCHEMA_INSERT_PERMISSIONS.`,
+        `INSERT operations are not allowed for schema '${deniedInsertSchema || "default"}'. Configure SCHEMA_INSERT_PERMISSIONS.`,
       );
       return {
         content: [
           {
             type: "text",
-            text: `Error: INSERT operations are not allowed for schema '${schema || "default"}'. Ask the administrator to update SCHEMA_INSERT_PERMISSIONS.`,
+            text: `Error: INSERT operations are not allowed for schema '${deniedInsertSchema || "default"}'. Ask the administrator to update SCHEMA_INSERT_PERMISSIONS.`,
           },
         ],
         isError: true,
       } as T;
     }
 
-    if (isUpdateOperation && !isUpdateAllowedForSchema(schema)) {
+    const deniedUpdateSchema = isUpdateOperation
+      ? schemas.find((s) => !isUpdateAllowedForSchema(s))
+      : undefined;
+    if (isUpdateOperation && deniedUpdateSchema !== undefined) {
       log(
         "error",
-        `UPDATE operations are not allowed for schema '${schema || "default"}'. Configure SCHEMA_UPDATE_PERMISSIONS.`,
+        `UPDATE operations are not allowed for schema '${deniedUpdateSchema || "default"}'. Configure SCHEMA_UPDATE_PERMISSIONS.`,
       );
       return {
         content: [
           {
             type: "text",
-            text: `Error: UPDATE operations are not allowed for schema '${schema || "default"}'. Ask the administrator to update SCHEMA_UPDATE_PERMISSIONS.`,
+            text: `Error: UPDATE operations are not allowed for schema '${deniedUpdateSchema || "default"}'. Ask the administrator to update SCHEMA_UPDATE_PERMISSIONS.`,
           },
         ],
         isError: true,
       } as T;
     }
 
-    if (isDeleteOperation && !isDeleteAllowedForSchema(schema)) {
+    const deniedDeleteSchema = isDeleteOperation
+      ? schemas.find((s) => !isDeleteAllowedForSchema(s))
+      : undefined;
+    if (isDeleteOperation && deniedDeleteSchema !== undefined) {
       log(
         "error",
-        `DELETE operations are not allowed for schema '${schema || "default"}'. Configure SCHEMA_DELETE_PERMISSIONS.`,
+        `DELETE operations are not allowed for schema '${deniedDeleteSchema || "default"}'. Configure SCHEMA_DELETE_PERMISSIONS.`,
       );
       return {
         content: [
           {
             type: "text",
-            text: `Error: DELETE operations are not allowed for schema '${schema || "default"}'. Ask the administrator to update SCHEMA_DELETE_PERMISSIONS.`,
+            text: `Error: DELETE operations are not allowed for schema '${deniedDeleteSchema || "default"}'. Ask the administrator to update SCHEMA_DELETE_PERMISSIONS.`,
           },
         ],
         isError: true,
       } as T;
     }
 
-    if (isDDLOperation && !isDDLAllowedForSchema(schema)) {
+    const deniedDDLSchema = isDDLOperation
+      ? schemas.find((s) => !isDDLAllowedForSchema(s))
+      : undefined;
+    if (isDDLOperation && deniedDDLSchema !== undefined) {
       log(
         "error",
-        `DDL operations are not allowed for schema '${schema || "default"}'. Configure SCHEMA_DDL_PERMISSIONS.`,
+        `DDL operations are not allowed for schema '${deniedDDLSchema || "default"}'. Configure SCHEMA_DDL_PERMISSIONS.`,
       );
       return {
         content: [
           {
             type: "text",
-            text: `Error: DDL operations are not allowed for schema '${schema || "default"}'. Ask the administrator to update SCHEMA_DDL_PERMISSIONS.`,
+            text: `Error: DDL operations are not allowed for schema '${deniedDDLSchema || "default"}'. Ask the administrator to update SCHEMA_DDL_PERMISSIONS.`,
           },
         ],
         isError: true,
       } as T;
     }
 
-    // For write operations that are allowed, use executeWriteQuery
+    // For write operations that are allowed across all referenced schemas, use executeWriteQuery
     if (
-      (isInsertOperation && isInsertAllowedForSchema(schema)) ||
-      (isUpdateOperation && isUpdateAllowedForSchema(schema)) ||
-      (isDeleteOperation && isDeleteAllowedForSchema(schema)) ||
-      (isDDLOperation && isDDLAllowedForSchema(schema))
+      (isInsertOperation && schemas.every((s) => isInsertAllowedForSchema(s))) ||
+      (isUpdateOperation && schemas.every((s) => isUpdateAllowedForSchema(s))) ||
+      (isDeleteOperation && schemas.every((s) => isDeleteAllowedForSchema(s))) ||
+      (isDDLOperation && schemas.every((s) => isDDLAllowedForSchema(s)))
     ) {
       return executeWriteQuery(sql);
     }

@@ -5,48 +5,66 @@ import SqlParser, { AST } from "node-sql-parser";
 const { Parser } = SqlParser;
 const parser = new Parser();
 
-// Extract schema from SQL query using the AST parser for accuracy.
-// Previous regex-based extraction could be bypassed with SQL comments
-// (e.g. USE/**/schema_name) which allowed schema permission checks to
-// fall through to the global default.
-function extractSchemaFromQuery(sql: string): string | null {
-  // Default schema from environment
+// Extract all referenced schemas from SQL query using the AST parser for accuracy.
+// Previous single-schema extraction returned on the first table with a `db` prefix,
+// allowing multi-table UPDATE/DELETE ... JOIN or DROP/TRUNCATE statements to bypass
+// per-schema permission checks.
+function extractSchemasFromQuery(sql: string): string[] {
   const defaultSchema = process.env.MYSQL_DB || null;
+  const schemas = new Set<string>();
 
-  // If we have a default schema and not in multi-DB mode, return it
-  if (defaultSchema && !isMultiDbMode) {
-    return defaultSchema;
-  }
-
-  // Use the AST parser to reliably extract schema information
   try {
     const astOrArray: AST | AST[] = parser.astify(sql, { database: "mysql" });
     const statements = Array.isArray(astOrArray) ? astOrArray : [astOrArray];
 
     for (const stmt of statements) {
       // Case 1: USE database statement
-      if (stmt.type === "use" && (stmt as any).db) {
-        return (stmt as any).db;
+      if (stmt.type === "use" && typeof (stmt as any).db === "string" && (stmt as any).db) {
+        schemas.add((stmt as any).db);
       }
 
-      // Case 2: database.table notation in FROM/INTO clauses
-      const tables = (stmt as any).table || (stmt as any).from;
-      if (Array.isArray(tables)) {
-        for (const t of tables) {
-          if (t.db) {
-            return t.db;
+      // Case 2: database.table notation across table, from, and DDL name clauses
+      const tableSources = [
+        (stmt as any).table,
+        (stmt as any).from,
+        (stmt as any).name,
+      ];
+      for (const tables of tableSources) {
+        if (Array.isArray(tables)) {
+          for (const t of tables) {
+            if (t && typeof t === "object" && typeof t.db === "string" && t.db) {
+              schemas.add(t.db);
+            }
           }
+        } else if (
+          tables &&
+          typeof tables === "object" &&
+          typeof tables.db === "string" &&
+          tables.db
+        ) {
+          schemas.add(tables.db);
         }
-      } else if (tables && typeof tables === "object" && tables.db) {
-        return tables.db;
       }
     }
   } catch (err: any) {
     log("error", "Failed to parse SQL for schema extraction:", err.message);
   }
 
-  // Return default if we couldn't find a schema in the query
-  return defaultSchema;
+  if (schemas.size > 0) {
+    return Array.from(schemas);
+  }
+
+  return defaultSchema ? [defaultSchema] : [];
+}
+
+function extractSchemaFromQuery(sql: string): string | null {
+  const defaultSchema = process.env.MYSQL_DB || null;
+  if (defaultSchema && !isMultiDbMode) {
+    const schemas = extractSchemasFromQuery(sql);
+    return schemas[0] ?? defaultSchema;
+  }
+  const schemas = extractSchemasFromQuery(sql);
+  return schemas[0] ?? defaultSchema;
 }
 
 /**
@@ -352,6 +370,7 @@ function findIntrospectionKind(node: unknown): IntrospectionKind | null {
 
 export {
   extractSchemaFromQuery,
+  extractSchemasFromQuery,
   getQueryTypes,
   containsSelectStar,
   findPIIColumnReferences,
